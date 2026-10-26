@@ -1,59 +1,81 @@
 # CooCCur-matriX
 
-从英文 Markdown 文本构建相邻词共现网络，导出六种邻接矩阵与热力图，并对词的邻接模式进行层次聚类。
+从**英文 Markdown** 构建相邻词共现矩阵，挖掘并合并二词组合，输出热力图、PPMI/NPMI 关联度和层次聚类结果。
+
+| 脚本 | 输入 | 用途 | 默认输出目录 |
+| --- | --- | --- | --- |
+| `cooccurrence.py` | Markdown，默认 `1.md` | 生成六种单词邻接矩阵及热力图 | `output/` |
+| `phrase_enhance.py` | Markdown，默认 `1.md` | 挖掘词组、合并原文匹配并重新生成六种矩阵及热力图 | `output/phrase/` |
+| `association.py` | 必填的计数矩阵 CSV | 计算 PPMI/NPMI，输出矩阵和热力图 | `output/` |
+| `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
+
+词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
 
 ## 环境与安装
 
-项目在 Python 3.12 上运行验证。依赖为 NumPy、matplotlib 和 SciPy。以下命令在项目根目录的 PowerShell 中执行。
+项目已在 Python 3.12.8 上运行验证，依赖 NumPy、matplotlib 和 SciPy。以下命令在项目根目录的 **Windows PowerShell** 中执行：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-clustering.txt
 ```
 
-如果已有 `.venv`，直接执行安装命令即可。后续始终显式使用虚拟环境中的 Python，无需激活环境，也不需要修改 PowerShell 执行策略。
+如果已有 `.venv`，直接安装依赖即可。后续显式调用虚拟环境中的 Python，无需激活环境或修改 PowerShell 执行策略。路径含空格时，用双引号包住路径，例如 `"doc/my notes.md"`。
 
 ## 快速开始
 
-用默认输入 `1.md` 生成六种矩阵和热力图，再把默认的无向、对角线为零的矩阵分为 6 簇：
+### 单词共现、关联度与聚类
 
 ```powershell
-.\.venv\Scripts\python.exe cooccurrence.py --figure-size 18
-.\.venv\Scripts\python.exe cluster_words.py --clusters 6 --figure-size 18
+.\.venv\Scripts\python.exe cooccurrence.py 1.md
+.\.venv\Scripts\python.exe association.py output/directed_diag_zero.csv --outdir output/association
+.\.venv\Scripts\python.exe cluster_words.py output/directed_diag_zero.csv --direction directed --clusters 6 --outdir output/clusters
 ```
 
-所有结果默认保存到 `output/`。默认仅选择出现在至少 2 个片段中的前 40 个高频词；这里的频率按“包含该词的片段数”计算。
+第一步默认保留至少出现在 2 个片段中的前 40 个高频词；频率按**包含该词的片段数**计算。后两步分别分析第一步生成的矩阵，可以独立选择运行。
+
+### 词组增强、可视化与后续分析
+
+```powershell
+.\.venv\Scripts\python.exe phrase_enhance.py 1.md --outdir output/phrase --top-words 0
+.\.venv\Scripts\python.exe association.py output/phrase/phrase_enhanced_directed_diag_zero.csv --outdir output/phrase/association
+.\.venv\Scripts\python.exe cluster_words.py output/phrase/phrase_enhanced_directed_diag_zero.csv --direction directed --clusters 6 --outdir output/phrase/clusters
+```
+
+这里的 `--top-words 0` 保留全部满足片段频率要求的词和词组，增强热力图仍默认只显示高频 40 项。终端会打印候选数、实际合并次数、保留词数和输出路径。词表很小时，应相应调低 `--clusters`。
 
 ## 文本处理与共现定义
 
-`cooccurrence.py` 的处理顺序如下：
+基础共现脚本 `cooccurrence.py` 的处理顺序：
 
-1. 清理常见 Markdown 标记、代码块、行内代码、URL、完整表格行和分隔线。标题与链接文字保留；参考文献文字没有单独排除。
-2. 对段落去重：忽略大小写和连续空白差异，保留第一份，防止重复粘贴正文重复计数。
-3. 按换行 `\n`、英文句点 `.` 和英文逗号 `,` 切分片段，不跨片段统计边。
-4. 用正则提取英文词，转为小写，移除脚本中的 `STOPWORDS`，默认移除不足 3 个字符的词。保留词内连字符和英文撇号；不做词形还原。
-5. 对过滤后的连续词对计数。相同词紧邻时不统计自环。
-6. 根据片段频率筛选词表，再提取对应子矩阵，行列按词的字母顺序排列。
+1. 清理三反引号代码块、行内代码、URL、完整表格行、分隔线和常见 Markdown 标记。保留标题和链接文字；参考文献没有单独排除。
+2. 对段落去重：忽略大小写和连续空白差异，仅保留第一份。重复粘贴的段落不会重复计数。
+3. 按换行 `\n`、英文句点 `.` 和英文逗号 `,` 切分片段，不跨片段统计边。这不是完整的自然语言句子切分。
+4. 用 `[A-Za-z][A-Za-z'-]*` 提取英文词并转为小写，过滤 `STOPWORDS` 和短词。默认最小词长为 3；保留词内连字符和英文撇号，不做词形还原。
+5. 对过滤后连续的词对计数；两个相同词紧邻时不统计自环。
+6. 根据片段频率和词数上限筛选词表，取对应子矩阵，行列按字母顺序排列。
 
-这里的“相邻”是**过滤停用词和短词之后的相邻**，例如 `alpha and beta` 会变成 `alpha beta` 并计一条边。词数上限和最低频率筛选不会把原本不相邻的词重新连接。当前分词针对英文，不包含中文分词。
+停用词定义在 `cooccurrence.py` 的 `STOPWORDS`，主要为冠词、介词、连词、代词、助动词和常见修饰词。词组脚本复用该集合；当前没有自定义停用词文件参数，也不自动挖掘额外停用词。
 
-例如过滤后的片段为：
+**基础矩阵中的相邻是删除停用词和短词之后的相邻。** 例如 `alpha and beta` 会变成 `alpha beta`，因此产生一条边。后续词频或词数筛选只截取矩阵，不会越过被筛掉的词重新连边。当前分词针对英文，不支持中文分词。
+
+例如过滤后的一个片段是：
 
 ```text
 alpha beta alpha gamma
 ```
 
-有向边分别计为 `alpha → beta = 1`、`beta → alpha = 1`、`alpha → gamma = 1`。有向矩阵的行表示前词，列表示后词。
+有向边为 `alpha → beta = 1`、`beta → alpha = 1`、`alpha → gamma = 1`。**有向矩阵的行是前词，列是后词**。
 
-无向矩阵合并两个方向：`alpha — beta = 2`、`alpha — gamma = 1`，并在矩阵的两个对称位置写入相同数值。布尔矩阵则把正数边权改为 `1`。
+无向矩阵把两个方向相加：`alpha — beta = 2`、`alpha — gamma = 1`，并在对称位置写入相同数值。布尔矩阵把所有正数边权改为 `1`。
 
-**对角线的 count 是词的片段频率**：在上面的一个片段里，`alpha` 虽然出现了两次，对角线 count 仍为 `1`。非对角线统计每一次相邻配对，因此二者的统计单位不同。
+**对角线的 count 是片段频率，不是词的出现总次数。** 上面一个片段内 `alpha` 出现两次，对角线仍为 `1`；非对角线则统计每一次相邻配对。两者的统计单位不同，关联度和聚类脚本默认忽略对角线。
 
-## 六种输出
+## 六种矩阵与 CSV 格式
 
-每种结果生成一份 `.csv` 和一张 `_heatmap.png`，共 12 个文件。CSV 第一行和第一列是词标签，编码为 UTF-8 BOM，便于在 Excel 中打开。
+基础共现脚本为每种矩阵生成一份 `.csv` 和一张 `_heatmap.png`，共 12 个文件：
 
-| 文件名前缀 | 边权 | 方向 | 对角线 |
+| 文件名前缀 | 非对角线边权 | 方向 | 对角线 |
 | --- | --- | --- | --- |
 | `directed_diag_count` | 相邻词对次数 | 有向 | 词的片段频率 |
 | `directed_diag_zero` | 相邻词对次数 | 有向 | 0 |
@@ -62,102 +84,245 @@ alpha beta alpha gamma
 | `directed_bool` | 有边为 1，无边为 0 | 有向 | 0 |
 | `undirected_bool` | 有边为 1，无边为 0 | 无向 | 0 |
 
-例如有向布尔图的文件为 `output/directed_bool.csv` 和 `output/directed_bool_heatmap.png`。
+例如 `output/directed_diag_zero.csv` 对应 `output/directed_diag_zero_heatmap.png`。增强结果使用同样的六种后缀，并增加 `phrase_enhanced_` 前缀。
 
-计数热力图使用 `inferno` 色阶和 `PowerNorm(gamma=0.55)` 增强低频差异；布尔图用两色显示 0 和 1。颜色映射不改变 CSV 数值。每张计数图根据自身最大值设置色阶，跨图比较时需看色条数值。
+矩阵 CSV 使用 UTF-8 BOM 编码，便于在 Excel 中打开。第一行和第一列为标签，标签顺序必须一致，数值部分为方阵：
 
-当前脚本输出原始计数或布尔值，未输出 count 归一化矩阵，也未进行双随机归一化。
+```csv
+word,alpha,beta
+alpha,0,3
+beta,1,0
+```
 
-## 共现脚本参数
+上例表示 `alpha → beta` 出现 3 次、`beta → alpha` 出现 1 次。词组标签直接使用空格，如 `machine learning`。读取矩阵时要求标签唯一且非空，数值有限、非负；`phrase_candidates.csv` 和 `*_clusters.csv` 是报告表，不能作为矩阵输入。
+
+## 单词共现：cooccurrence.py
 
 ```powershell
-.\.venv\Scripts\python.exe cooccurrence.py [input] [选项]
+.\.venv\Scripts\python.exe cooccurrence.py 1.md --outdir output/base --top-words 0 --min-frequency 1 --figure-size 28
 ```
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
 | `input` | `1.md` | 输入 Markdown 路径 |
 | `--outdir` | `output` | 输出目录 |
-| `--top-words` | `40` | 保留片段频率最高的 N 个词；`0` 表示不限制数量 |
-| `--min-frequency` | `2` | 词至少出现于多少个片段 |
-| `--min-length` | `3` | 最小词长 |
-| `--figure-size` | 按词数计算 | 同时设置六张热力图的宽度，单位为英寸；高度为宽度的 0.88 倍 |
+| `--top-words` | `40` | 保留片段频率最高的 N 个词；`0` 表示不限数量 |
+| `--min-frequency` | `2` | 词至少出现于多少个片段，整数且至少为 1 |
+| `--min-length` | `3` | 最小词长，整数且至少为 1 |
+| `--figure-size` | 按词数计算 | 六张热力图的宽度，单位为英寸 |
 
-未指定 `--figure-size` 时，宽度为 `max(10, min(28, 词数 × 0.55))` 英寸，输出分辨率为 220 DPI。
+上例连仅出现于一个片段的词也保留。基础脚本的热力图绘制整个已筛选词表，没有 `--plot-top-words` 参数；词多时可先限制 `--top-words`，或使用支持独立控制显示数量的词组/关联度脚本。
 
-保留所有满足默认频次要求的词：
+## 词组增强：phrase_enhance.py
 
-```powershell
-.\.venv\Scripts\python.exe cooccurrence.py --top-words 0 --figure-size 28
-```
-
-连只出现于一个片段的词也保留：
+输入为 `.md` 或 `.markdown` 文件。脚本读取原文中连续的二词组合，按出现次数和 NPMI 筛选，将具体匹配合并为一个词组，再重建整数计数矩阵。仅有共现矩阵无法恢复每次匹配的前后词序，因此增强脚本需要 Markdown 输入。
 
 ```powershell
-.\.venv\Scripts\python.exe cooccurrence.py --top-words 0 --min-frequency 1
+.\.venv\Scripts\python.exe phrase_enhance.py 1.md --outdir output/phrase --top-words 0 --min-phrase-frequency 3 --min-npmi 0.2
 ```
 
-词数较多时，CSV 仍保存完整矩阵，但图片上的词标签会变密。`--figure-size` 仅改变图像尺寸，不改变词数。
+### 匹配与合并规则
 
-## 词语聚类
+1. 复用基础脚本的 Markdown 清理、段落去重、分段和英文词提取规则。
+2. **先保留停用词和短词**，统计原文片段内的相邻词对。NPMI 的总量和左右边际频率使用全部相邻词对计算。
+3. 候选组合必须由两个不同的非停用词组成，两个词都满足 `--min-length`，词对次数满足 `--min-phrase-frequency`。
+4. 以 `--min-npmi` 筛选候选，在原文词序上从左到右合并。每个词最多参与一次合并，不跨片段、不递归挖掘更长词组。
+5. 再删除剩余的停用词和短词，按合并后的片段重新统计矩阵、片段频率，最后进行词表筛选。
 
-`cluster_words.py` 使用**余弦距离 + 平均连接的凝聚层次聚类**，将邻接模式相似的词分为一组。
+例如 `machine learning` 可以成为候选，`machine and learning` 不会被合并成该词组；后者在最终单词矩阵里仍可能因删除 `and` 而产生普通邻接边。
 
-- 无向矩阵：每个词的邻接行向量作为特征。
-- 有向矩阵：拼接该词的出边行向量和入边列向量，同时考虑前后关系。
-- 默认先清零对角线，防止对角线词频影响邻接模式比较；可用 `--keep-diagonal` 保留。
-- 特征全零的词没有连接证据，标为 `cluster = 0`，不参与聚类、不出现在树状图中。其他簇从 1 开始编号。
+若 `alpha beta` 和 `beta gamma` 都入选，`alpha beta gamma` 会合并为 `[alpha beta] [gamma]`。重叠冲突按位置解决，不比较 NPMI 高低。词组在一次实际匹配中替代组成词；组成词在其他位置独立出现时仍可保留。
 
-这一方法比较“是否连接到相似的邻词”，不直接按两个词之间的边权分组，也不是语义嵌入或网络社区发现。聚类结果用于探索文本结构，不保证每簇对应一个主题。
+这是一种统计筛选，不保证候选都是语言学上合适的短语。词组评分使用原文相邻词对，`association.py` 使用输入矩阵中的计数，二者的样本空间不同，NPMI 数值不应直接等同。
 
-用无向计数矩阵分成 6 簇：
-
-```powershell
-.\.venv\Scripts\python.exe cluster_words.py output/undirected_diag_zero.csv --clusters 6
-```
-
-用有向计数矩阵聚类：
-
-```powershell
-.\.venv\Scripts\python.exe cluster_words.py output/directed_diag_zero.csv --direction directed --clusters 6 --figure-size 18
-```
-
-也可以输入 `directed_bool.csv` 或 `undirected_bool.csv`，此时比较的是邻居存在与否。
+### 参数
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `input` | `output/undirected_diag_zero.csv` | 输入邻接矩阵 CSV |
-| `--clusters` | `6` | 非孤立词的目标簇数；不得超过可聚类词数 |
-| `--direction` | `auto` | `auto` 按矩阵是否对称判断；也可指定 `directed` 或 `undirected` |
-| `--outdir` | `output` | 输出目录 |
-| `--prefix` | 输入文件名去掉扩展名 | 输出文件名前缀，不含目录 |
+| `input` | `1.md` | 输入 Markdown，不接受矩阵 CSV |
+| `--outdir` | `output/phrase` | 输出目录 |
+| `--min-phrase-frequency` | `3` | 去重后原文中连续词对的最低出现次数，正整数 |
+| `--min-npmi` | `0.2` | 词对 NPMI 下限，范围为 -1 至 1 |
+| `--min-frequency` | `2` | 合并后词或词组至少出现于多少个片段，正整数 |
+| `--top-words` | `40` | 合并后保留的高频词和词组总数；`0` 表示全部 |
+| `--min-length` | `3` | 单词及每个词组组成词的最小长度，正整数 |
+| `--plot-top-words` | `40` | 热力图显示片段频率最高的 N 项；`0` 显示全部，不影响 CSV |
+| `--figure-size` | 按显示词数计算 | 热力图宽度，单位为英寸 |
+| `--no-plots` | 关闭 | 仅生成 CSV，跳过绘图 |
+
+`--min-phrase-frequency` 统计词对的出现次数，`--min-frequency` 统计合并后包含词或词组的片段数，两个门槛分别生效。相同段落会先去重，重复复制一段文本不会抬高频次。
+
+### 输出与候选表
+
+默认输出 **6 份矩阵 CSV + 6 张热力图 + 1 份候选表**。矩阵名为 `phrase_enhanced_<六种后缀>.csv`，热力图名为 `phrase_enhanced_<六种后缀>_heatmap.png`。计数来自合并后的实际词序，`diag_count` 对角线仍是片段频率。
+
+`phrase_candidates.csv` 按 NPMI 降序、次数降序排列，记录所有达到词对最低次数的合格候选，包括未达到 NPMI 门槛的候选：
+
+| 字段 | 含义 |
+| --- | --- |
+| `phrase` | 词组标签，以空格连接两个词 |
+| `left`、`right` | 前词、后词 |
+| `count` | 去重后原文中的连续词对出现次数，包含可能重叠的匹配 |
+| `npmi` | 原文词对的归一化互信息 |
+| `selected` | 是否通过 NPMI 门槛，值为 `True` 或 `False` |
+| `merged_count` | 解决重叠后实际合并的次数 |
+| `segment_frequency` | 合并后包含该词组的片段数 |
+| `included_in_matrix` | 通过最终片段频率和词数筛选后是否进入矩阵 |
+
+`selected=True` 不保证进入最终矩阵：重叠可能阻止实际合并，片段频率和词数上限也可能将词组筛掉。没有候选通过阈值时，仍输出普通词矩阵；没有任何词通过最终筛选时，脚本会报错。
+
+仅生成 CSV，适合调整挖掘阈值时使用：
+
+```powershell
+.\.venv\Scripts\python.exe phrase_enhance.py 1.md --outdir output/phrase_csv --top-words 0 --no-plots
+```
+
+## 可视化与显示数量
+
+所有图直接保存为 PNG，使用 matplotlib 的 `Agg` 后端，不弹出窗口。矩阵热力图为 220 DPI；默认宽度为 `max(10, min(28, 显示词数 × 0.55))` 英寸，高度为宽度的 0.88 倍。`--figure-size` 只改变图宽，不改变数据或显示词数。
+
+| 图类型 | 默认显示范围 | 配色与含义 |
+| --- | --- | --- |
+| 基础计数热力图 | 全部已筛选词 | 灰白至棕红色，使用 `PowerNorm(gamma=0.55)` 增强低频差异 |
+| 增强计数热力图 | 合并后片段频率最高的 40 项 | 同上，词组标签加粗并标为棕红色 |
+| 布尔热力图 | 随对应基础/增强脚本 | 灰白和深棕红两色区分 0、1 |
+| PPMI 热力图 | 输入矩阵中行和与列和之和最高的 40 项 | 灰白至棕红色，线性色阶从 0 到完整 PPMI 矩阵最大值 |
+| NPMI 热力图 | 与 PPMI 相同 | `coolwarm`，固定色阶 -1 至 1 |
+
+**矩阵保留词数和热力图显示词数分别控制：**
+
+- `--top-words` 决定基础/增强 CSV 中有多少个词或词组；被排除的项无法在后续分析中恢复。
+- `--plot-top-words` 只控制增强/关联度热力图的展示子集；CSV 和关联度计算仍使用完整输入矩阵。
+- `--plot-top-words 0` 显示全部。词数较多时标签会密集，建议先查看 40～60 项。
+
+例如，保留完整增强矩阵，图中显示高频 60 项：
+
+```powershell
+.\.venv\Scripts\python.exe phrase_enhance.py 1.md --top-words 0 --plot-top-words 60 --figure-size 24
+```
+
+增强热力图筛选显示项后仍按字母顺序排列；关联度图按共现强度排名展示。计数图按各自显示矩阵的最大值设定色阶，跨图比较应查看色条数值。色阶变换不改变 CSV 中的原始计数，也不是归一化矩阵；当前没有双随机归一化步骤。
+
+## PPMI 与 NPMI：association.py
+
+输入使用非负计数矩阵，例如 `directed_diag_zero.csv` 或增强后的对应文件。有向和无向矩阵均可；布尔矩阵丢失了出现次数，不适合用来解释词对频率关联。
+
+```powershell
+.\.venv\Scripts\python.exe association.py output/phrase/phrase_enhanced_directed_diag_zero.csv --outdir output/phrase/association --prefix enhanced --plot-top-words 40 --figure-size 18
+```
+
+设矩阵单元计数为 $c_{ij}$，总计数为 $N$，以行和、列和估计左右位置的边际频率。对已观察到的词对计算：
+
+$$
+PMI(i,j)=\ln\frac{c_{ij}N}{c_{i\cdot}c_{\cdot j}},\qquad
+PPMI(i,j)=\max(PMI(i,j),0),\qquad
+NPMI(i,j)=\frac{PMI(i,j)}{-\ln(c_{ij}/N)}.
+$$
+
+默认先清零对角线。未观察到的词对在输出中填 `0`，因此 NPMI 的 `0` 也可能表示缺少观测，不能一律理解为独立。若全部配对事件都集中于一个单元，脚本将该单元的 NPMI 约定为 `1`。没有可评分的非零计数时会报错。
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `input` | 必填 | 计数矩阵 CSV 路径 |
+| `--outdir` | `output` | 输出目录；不会自动跟随输入文件目录 |
+| `--prefix` | 输入文件名去掉扩展名 | 输出文件名前缀，不能包含目录 |
+| `--include-diagonal` | 关闭 | 将对角线计数纳入关联度计算 |
+| `--plot-top-words` | `40` | 热力图显示共现强度最高的 N 项；`0` 显示全部 |
+| `--figure-size` | 按显示词数计算 | 单张热力图宽度，单位为英寸；并排对照图宽度为两倍 |
+
+不建议随意开启 `--include-diagonal`：主脚本的对角线是片段频率，非对角线是配对次数，混合后解释会改变。关联度只使用当前输入 CSV 的词表和计数；调整上游 `--top-words` 后，边际频率和分数也可能改变。
+
+上例生成以下 5 个文件：
+
+```text
+output/phrase/association/
+  enhanced_ppmi.csv
+  enhanced_npmi.csv
+  enhanced_ppmi_heatmap.png
+  enhanced_npmi_heatmap.png
+  enhanced_ppmi_npmi_comparison.png
+```
+
+CSV 保存完整输入词表，热力图展示子集不会改变分数。PPMI 非负，NPMI 的已观察词对分数限制在 -1 至 1。
+
+## 词语聚类：cluster_words.py
+
+使用**余弦距离 + 平均连接的凝聚层次聚类**，按邻接模式分组：
+
+- 无向输入：每个词的邻接行向量作为特征；非对称输入先与转置取平均。
+- 有向输入：拼接出边行向量和入边列向量，同时考虑前后关系。
+- 默认清零对角线；`--keep-diagonal` 可保留片段频率特征。
+- 特征全零的词标为 `cluster=0`，不参与聚类，也不出现在树状图中；其余簇从 1 开始编号。
+
+```powershell
+.\.venv\Scripts\python.exe cluster_words.py output/phrase/phrase_enhanced_directed_diag_zero.csv --direction directed --clusters 6 --outdir output/phrase/clusters --prefix enhanced --figure-size 18
+```
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `input` | `output/undirected_diag_zero.csv` | 输入矩阵 CSV |
+| `--clusters` | `6` | 目标簇数，至少为 1；存在非孤立词时不得超过其数量 |
+| `--direction` | `auto` | `auto` 按数值对称性判断；或显式指定 `directed`、`undirected` |
+| `--outdir` | `output` | 输出目录；不会自动跟随输入文件目录 |
+| `--prefix` | 输入文件名去掉扩展名 | 输出文件名前缀，不能包含目录 |
 | `--figure-size` | 按词数计算 | 树状图宽度，单位为英寸；高度固定为 8 英寸 |
 | `--keep-diagonal` | 关闭 | 在聚类特征中保留原始对角线 |
 
-`--direction undirected` 会将输入矩阵与其转置取平均；`auto` 仅依据数值对称性判断，已知为有向网络时可显式指定。
+已知输入为有向矩阵时建议使用 `--direction directed`，因为有向计数也可能恰好对称。计数矩阵和布尔矩阵都可聚类，分别比较连接强度模式和邻居存在模式。也可输入非负 PPMI 矩阵；包含负值的 NPMI 矩阵会被拒绝。
 
-以默认输入为例，输出：
+上例生成：
 
-- `output/undirected_diag_zero_clusters.csv`：`word,cluster` 两列，按簇编号和词排序。
-- `output/undirected_diag_zero_dendrogram.png`：层次聚类树状图；纵轴为平均连接余弦距离，叶子文字颜色对应簇编号。树枝颜色采用绘图库默认距离阈值，不表示 `--clusters` 的精确切分。
+- `output/phrase/clusters/enhanced_clusters.csv`：`word,cluster` 两列，按簇编号和词排序。
+- `output/phrase/clusters/enhanced_dendrogram.png`：树状图，纵轴为平均连接余弦距离。叶子文字按簇着色；同簇子树的分支使用对应颜色，跨簇分支为灰色。超过 6 簇时颜色循环使用，具体归属以 CSV 为准。
 
-**聚类脚本只能处理输入 CSV 中已有的词。** 想增加词数，应先调整 `cooccurrence.py` 的 `--top-words`、`--min-frequency` 等参数重新生成矩阵，再重新聚类。`--clusters` 只控制组数。
+这一步比较“是否连接到相似的邻词”，不直接按两个词之间的边权分组，也不保证每簇对应一个语义主题。`--clusters` 只改变组数；要增加可聚类词数，需要先在基础/增强脚本中调整 `--top-words` 或 `--min-frequency`，重新生成 CSV。
 
-## 文件与重跑
+## 常见问题与调参
+
+| 现象 | 检查与调整 |
+| --- | --- |
+| 不知道哪里传入文件 | 文件路径是脚本后的第一个位置参数：基础/增强脚本传 Markdown，关联度/聚类脚本传矩阵 CSV |
+| 路径不存在或输出位置不对 | 从项目根目录运行；相对路径均相对于当前工作目录。分析增强结果时显式填写 `--outdir` |
+| 没有词组通过筛选 | 先看 `phrase_candidates.csv`；适当降低 `--min-phrase-frequency` 或 `--min-npmi`，确认原文是连续匹配且不是重复段落 |
+| 候选已入选，矩阵里却没有 | 看 `merged_count` 和 `included_in_matrix`；再检查重叠、`--min-frequency` 和 `--top-words` |
+| 只有 40 个词，或想多保留词组 | 将 `--top-words` 调大或设为 `0`；必要时降低片段频率门槛 |
+| CSV 词很多，图上只有 40 项 | 增强/关联度脚本的默认显示上限；调整 `--plot-top-words`，无需改变 CSV |
+| 图片太密或生成较慢 | 减少显示项、调整 `--figure-size`；增强脚本可加 `--no-plots`。完整矩阵存储量随词数平方增长 |
+| `no words/terms remain` | 检查英文内容，降低 `--min-frequency` 或 `--min-length`；空文件和中文正文不会得到英文词表 |
+| `no off-diagonal co-occurrences` | 输入没有可评分的配对事件；检查是否只剩孤立词，并重新生成包含有效邻接边的计数矩阵 |
+| 聚类提示簇数过多 | 降低 `--clusters`，其上限取决于有连接的词数；查看终端列出的孤立词 |
+| 修改停用词后结果没变 | 两个 Markdown 脚本都需重新运行，下游再读取新的 CSV；已有矩阵不会自动更新 |
+
+调词组阈值时建议先保留 `--top-words 0`，查看候选表，再决定最终词表大小。提高词对次数门槛能减少稀有组合，提高 NPMI 门槛会保留关联更强的组合；仍需检查候选是否符合具体文本含义。
+
+## 文件、重跑与验证
 
 | 路径 | 用途 |
 | --- | --- |
-| `1.md` | 默认输入文本 |
-| `cooccurrence.py` | 生成六种邻接矩阵和热力图 |
-| `cluster_words.py` | 读取邻接矩阵，生成聚类结果和树状图 |
-| `requirements-clustering.txt` | 运行两个脚本所需的依赖列表 |
-| `output/` | 默认输出目录 |
+| `1.md` | 默认输入文本，可换成自己的 Markdown |
+| `cooccurrence.py` | 文本清理、分词、基础矩阵及热力图 |
+| `phrase_enhance.py` | 原文词组挖掘、合并、增强矩阵及热力图 |
+| `association.py` | PPMI/NPMI 矩阵、热力图和对照图 |
+| `cluster_words.py` | 聚类分组 CSV 和树状图 |
+| `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
+| `requirements-clustering.txt` | 四个脚本共用的依赖列表 |
+| `output/` | 默认结果根目录，已在 Git 忽略规则中排除 |
 
-两个脚本均使用无界面的 matplotlib `Agg` 后端，图片直接保存，无需 Tk 或弹窗。重跑会覆盖同名输出，但不会删除目录中的其他旧结果。需要保留不同实验时，使用不同 `--outdir`，聚类也可用不同 `--prefix`。
+输出目录不存在时会自动创建。重跑覆盖同名文件，目录中其他旧结果仍然保留；例如 `--no-plots` 不会删除已有 PNG。比较不同参数时使用不同的 `--outdir`，关联度/聚类也可配合不同 `--prefix`。当前基础/增强 CSV 为原始计数或布尔值，关联度变换由 `association.py` 单独完成。
 
 查看完整命令帮助：
 
 ```powershell
 .\.venv\Scripts\python.exe cooccurrence.py --help
+.\.venv\Scripts\python.exe phrase_enhance.py --help
+.\.venv\Scripts\python.exe association.py --help
 .\.venv\Scripts\python.exe cluster_words.py --help
 ```
+
+运行现有词组增强测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest test_phrase_enhance -v
+```
+
+测试覆盖词组原文边界、停用词隔断、段落去重、NPMI、重叠匹配、合并后前后文与片段频率、词组间连接，以及 CSV/PNG 输出和命令行参数校验。测试使用临时目录，不依赖 `1.md` 的具体内容。

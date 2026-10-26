@@ -14,17 +14,25 @@ TERRACOTTA = LinearSegmentedColormap.from_list(
     "terracotta", ["#F5F4F3", "#E6D9D5", "#C99A8D", "#A85F50", "#6F332B"]
 )
 
-STOPWORDS = set("""a an the and or but if then than of to in on at by for from with
-as is are was were be been being do does did have has had can could will would
-should may might must this that these those it its we our you your they their
-he she his her i me my not no so such also very more most less many much each
-all any both either neither other another same into over after before between
-through during about against without within across per via et al vs use using
-used based paper study work result results show shows shown demonstrate propose
-proposed introduce introduced evaluate evaluated evaluation approach method
-methods provide provided present presented section table figure example
-including include includes first second one two three new different overall
-respectively
+STOPWORDS = set("""a an the
+and or but nor yet so
+if unless whether
+of to in on at by for from with as into onto upon about over under above below
+between among through during before after since until while within without
+is am are was were be been being
+do does did done doing
+have has had having
+can could may might must shall should will would
+i me my mine we us our ours you your yours he him his she her hers it its
+they them their theirs who whom whose which what whatever whoever
+this that these those here there
+not no neither either
+all any both each every few many much more most some several enough
+such same other another
+also just only even still already ever never always
+very too quite rather almost
+than then once again
+per via
 """.split())
 WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
 SEGMENT_RE = re.compile(r"[\n.,]+")
