@@ -137,7 +137,6 @@ def main() -> None:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     prefix = args.prefix or input_path.stem
-    size = args.figure_size or max(10, min(28, len(words) * 0.55))
     ppmi_csv, npmi_csv = outdir / f"{prefix}_ppmi.csv", outdir / f"{prefix}_npmi.csv"
     ppmi_png, npmi_png = outdir / f"{prefix}_ppmi_heatmap.png", outdir / f"{prefix}_npmi_heatmap.png"
     comparison_png = outdir / f"{prefix}_ppmi_npmi_comparison.png"

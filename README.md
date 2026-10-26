@@ -6,7 +6,8 @@
 | --- | --- | --- | --- |
 | `cooccurrence.py` | Markdown，默认 `1.md` | 生成六种单词邻接矩阵及热力图 | `output/` |
 | `phrase_enhance.py` | Markdown，默认 `1.md` | 挖掘词组、合并原文匹配并重新生成六种矩阵及热力图 | `output/phrase/` |
-| `association.py` | 必填的计数矩阵 CSV | 计算 PPMI/NPMI，输出矩阵和热力图 | `output/` |
+| `association.py` | 必填的计数矩阵 CSV | 计算 PPMI/NPMI 并输出热力图 | `output/` |
+| `phrase_entropy.py` | Markdown，默认 `1.md`；可选候选表 | 计算有向连续词组的左、右及联合边界熵，输出独立图、左右对照图和联合熵图 | `output/phrase_entropy/` |
 | `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
 
 词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
@@ -34,10 +35,11 @@ python -m venv .venv
 
 第一步默认保留至少出现在 2 个片段中的前 40 个高频词；频率按**包含该词的片段数**计算。后两步分别分析第一步生成的矩阵，可以独立选择运行。
 
-### 词组增强、可视化与后续分析
+### 词组增强、左右熵与后续分析
 
 ```powershell
 .\.venv\Scripts\python.exe phrase_enhance.py 1.md --outdir output/phrase --top-words 0
+.\.venv\Scripts\python.exe phrase_entropy.py 1.md --outdir output/phrase_entropy --phrase-candidates output/phrase/phrase_candidates.csv
 .\.venv\Scripts\python.exe association.py output/phrase/phrase_enhanced_directed_diag_zero.csv --outdir output/phrase/association
 .\.venv\Scripts\python.exe cluster_words.py output/phrase/phrase_enhanced_directed_diag_zero.csv --direction directed --clusters 6 --outdir output/phrase/clusters
 ```
@@ -203,15 +205,16 @@ beta,1,0
 
 增强热力图筛选显示项后仍按字母顺序排列；关联度图按共现强度排名展示。计数图按各自显示矩阵的最大值设定色阶，跨图比较应查看色条数值。色阶变换不改变 CSV 中的原始计数，也不是归一化矩阵；当前没有双随机归一化步骤。
 
+
 ## PPMI 与 NPMI：association.py
 
-输入使用非负计数矩阵，例如 `directed_diag_zero.csv` 或增强后的对应文件。有向和无向矩阵均可；布尔矩阵丢失了出现次数，不适合用来解释词对频率关联。
+输入非负计数矩阵 CSV（有向或无向均可）。脚本只负责矩阵关联度，不计算左右熵；左右熵由独立的 `phrase_entropy.py` 从原始 Markdown 计算。
 
 ```powershell
-.\.venv\Scripts\python.exe association.py output/phrase/phrase_enhanced_directed_diag_zero.csv --outdir output/phrase/association --prefix enhanced --plot-top-words 40 --figure-size 18
+.\.venv\Scripts\python.exe association.py output/directed_diag_zero.csv --outdir output/association
 ```
 
-设矩阵单元计数为 $c_{ij}$，总计数为 $N$，以行和、列和估计左右位置的边际频率。对已观察到的词对计算：
+设矩阵单元计数为 $c_{ij}$，总计数为 $N$，以行和、列和估计边际频率：
 
 $$
 PMI(i,j)=\ln\frac{c_{ij}N}{c_{i\cdot}c_{\cdot j}},\qquad
@@ -219,31 +222,55 @@ PPMI(i,j)=\max(PMI(i,j),0),\qquad
 NPMI(i,j)=\frac{PMI(i,j)}{-\ln(c_{ij}/N)}.
 $$
 
-默认先清零对角线。未观察到的词对在输出中填 `0`，因此 NPMI 的 `0` 也可能表示缺少观测，不能一律理解为独立。若全部配对事件都集中于一个单元，脚本将该单元的 NPMI 约定为 `1`。没有可评分的非零计数时会报错。
+默认清零对角线。未观察到的词对在输出中填 `0`；如全部配对事件集中在一个单元，该单元的 NPMI 约定为 `1`。热力图默认显示共现强度最高的 40 项，CSV 始终保留完整输入词表。
+
+输出：`{prefix}_ppmi.csv`、`{prefix}_npmi.csv`、两张对应热力图和 `{prefix}_ppmi_npmi_comparison.png`。
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
 | `input` | 必填 | 计数矩阵 CSV 路径 |
-| `--outdir` | `output` | 输出目录；不会自动跟随输入文件目录 |
+| `--outdir` | `output` | 输出目录 |
 | `--prefix` | 输入文件名去掉扩展名 | 输出文件名前缀，不能包含目录 |
 | `--include-diagonal` | 关闭 | 将对角线计数纳入关联度计算 |
-| `--plot-top-words` | `40` | 热力图显示共现强度最高的 N 项；`0` 显示全部 |
-| `--figure-size` | 按显示词数计算 | 单张热力图宽度，单位为英寸；并排对照图宽度为两倍 |
+| `--plot-top-words` | `40` | 热力图显示强度最高的 N 项；`0` 显示全部 |
+| `--figure-size` | 按显示词数计算 | 单张热力图宽度，单位为英寸 |
 
-不建议随意开启 `--include-diagonal`：主脚本的对角线是片段频率，非对角线是配对次数，混合后解释会改变。关联度只使用当前输入 CSV 的词表和计数；调整上游 `--top-words` 后，边际频率和分数也可能改变。
+## 词组边界熵：phrase_entropy.py
 
-上例生成以下 5 个文件：
+边界熵针对**原文中的连续有序词组**，因此必须读取 Markdown。输入不是共现矩阵；脚本仅支持有向词序。矩阵格 `(A,B)` 表示短语 `A B`，反向 `B A` 是另一个独立短语。左图统计 `X A B` 中左邻词 `X` 的分布熵，右图统计 `A B Y` 中右邻词 `Y` 的分布熵；联合图统计左右邻词对 `(X,Y)` 的联合分布熵。熵以自然对数计算，单位为 nat。停用词和短词会阻止词组匹配，但若在词组外侧仍作为真实上下文计入。
 
-```text
-output/phrase/association/
-  enhanced_ppmi.csv
-  enhanced_npmi.csv
-  enhanced_ppmi_heatmap.png
-  enhanced_npmi_heatmap.png
-  enhanced_ppmi_npmi_comparison.png
+对联合熵，给定词组 `A B`，将每次出现的左右上下文视为一个有序组合：
+
+$$
+H(L,R\mid A B)=-\sum_{x,y}p(x,y\mid A B)\ln p(x,y\mid A B).
+$$
+
+这直接衡量左右边界组合的多样性，不等同于左熵与右熵相加；不同的 `(X,Y)` 组合会分别计数。
+
+```powershell
+.\.venv\Scripts\python.exe phrase_entropy.py 1.md --outdir output/phrase_entropy
 ```
 
-CSV 保存完整输入词表，热力图展示子集不会改变分数。PPMI 非负，NPMI 的已观察词对分数限制在 -1 至 1。
+可用词组增强脚本输出的候选表限制要统计的有序词对；按 `left,right` 列读取全部候选行，不要求候选已被选中：
+
+```powershell
+.\.venv\Scripts\python.exe phrase_entropy.py 1.md --phrase-candidates output/phrase/phrase_candidates.csv --outdir output/phrase_entropy
+```
+
+脚本按基础规则清理 Markdown、去重段落，并保留停用词/短词识别原始相邻边界。不会跨越标点分段、段落或被过滤 token 拼接词组。每次真实出现独立计数；左右单侧熵忽略缺失的那一侧，并在报告记录 `*_missing_count`。联合熵则将片段边界分别记作 `<BOS>`（左边界）和 `<EOS>`（右边界），把每次出现的 `(X,Y)` 都纳入联合分布。无上下文时单侧熵留空；只有一种上下文时熵为真实的 `0`。无该短语的位置标灰；单侧无上下文的熵格也标灰。
+
+输出文件均使用输入文件名作为默认前缀：`{prefix}_phrase_counts.csv`、`{prefix}_left_entropy.csv`、`{prefix}_right_entropy.csv`、`{prefix}_joint_entropy.csv`、`{prefix}_phrase_boundaries.csv`，以及四张 PNG：`{prefix}_left_entropy_heatmap.png`、`{prefix}_right_entropy_heatmap.png`、`{prefix}_left_right_entropy_heatmap.png` 和 `{prefix}_joint_entropy_heatmap.png`。左、右熵各有独立图；左右对照图是额外视图，每格分为两个三角形：左上表示左熵，右下表示右熵；共享同一色阶，缺失值标灰。联合熵另图显示。所有图共享词序，只表示有向顺序，不生成无向图。默认显示参与词组次数最多的 40 个词；`--plot-top-words 0` 显示全部，显示筛选不影响熵计算。
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `input` | `1.md` | 原始 Markdown |
+| `--outdir` | `output/phrase_entropy` | 输出目录 |
+| `--prefix` | 输入文件名去掉扩展名 | 输出文件名前缀 |
+| `--phrase-candidates` | 不启用 | 可选候选 CSV，须有 `left`、`right` 列 |
+| `--min-phrase-frequency` | `3` | 去重后最小词组出现次数 |
+| `--min-length` | `3` | 词组词元最小长度；停用词仍排除 |
+| `--plot-top-words` | `40` | 图中显示词数；`0` 显示全部 |
+| `--figure-size` | 按显示词数计算 | 单张图宽度，单位为英寸 |
 
 ## 词语聚类：cluster_words.py
 
@@ -303,9 +330,12 @@ CSV 保存完整输入词表，热力图展示子集不会改变分数。PPMI �
 | `cooccurrence.py` | 文本清理、分词、基础矩阵及热力图 |
 | `phrase_enhance.py` | 原文词组挖掘、合并、增强矩阵及热力图 |
 | `association.py` | PPMI/NPMI 矩阵、热力图和对照图 |
+| `phrase_entropy.py` | 原文连续词组左/右/联合边界熵矩阵、报告和两张有向热力图 |
 | `cluster_words.py` | 聚类分组 CSV 和树状图 |
 | `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
-| `requirements-clustering.txt` | 四个脚本共用的依赖列表 |
+| `test_association.py` | PPMI/NPMI 矩阵与 CLI 回归测试 |
+| `test_phrase_entropy.py` | 原文左/右/联合边界熵、词序、上下文边界和输出测试 |
+| `requirements-clustering.txt` | 五个脚本共用的依赖列表 |
 | `output/` | 默认结果根目录，已在 Git 忽略规则中排除 |
 
 输出目录不存在时会自动创建。重跑覆盖同名文件，目录中其他旧结果仍然保留；例如 `--no-plots` 不会删除已有 PNG。比较不同参数时使用不同的 `--outdir`，关联度/聚类也可配合不同 `--prefix`。当前基础/增强 CSV 为原始计数或布尔值，关联度变换由 `association.py` 单独完成。
@@ -316,13 +346,15 @@ CSV 保存完整输入词表，热力图展示子集不会改变分数。PPMI �
 .\.venv\Scripts\python.exe cooccurrence.py --help
 .\.venv\Scripts\python.exe phrase_enhance.py --help
 .\.venv\Scripts\python.exe association.py --help
+.\.venv\Scripts\python.exe phrase_entropy.py --help
 .\.venv\Scripts\python.exe cluster_words.py --help
 ```
 
-运行现有词组增强测试：
+运行项目测试：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest test_phrase_enhance -v
+.\.venv\Scripts\python.exe -m unittest test_association test_phrase_entropy -v
 ```
 
-测试覆盖词组原文边界、停用词隔断、段落去重、NPMI、重叠匹配、合并后前后文与片段频率、词组间连接，以及 CSV/PNG 输出和命令行参数校验。测试使用临时目录，不依赖 `1.md` 的具体内容。
+测试覆盖词组原文边界、停用词隔断、段落去重、左右及联合熵的有序词对与边界处理、关联度计算，以及 CSV/PNG 输出和命令行参数校验。测试使用临时目录，不依赖 `1.md` 的具体内容。
