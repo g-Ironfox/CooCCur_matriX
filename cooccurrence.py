@@ -7,7 +7,12 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap, PowerNorm
 import numpy as np
+
+TERRACOTTA = LinearSegmentedColormap.from_list(
+    "terracotta", ["#F5F4F3", "#E6D9D5", "#C99A8D", "#A85F50", "#6F332B"]
+)
 
 STOPWORDS = set("""a an the and or but if then than of to in on at by for from with
 as is are was were be been being do does did have has had can could will would
@@ -135,15 +140,21 @@ def main() -> None:
                 writer.writerow([word, *row.tolist()])
 
         fig, ax = plt.subplots(figsize=(size, size * 0.88), constrained_layout=True)
-        image = ax.imshow(matrix, cmap="YlGnBu", interpolation="nearest", aspect="auto",
-                           vmin=0, vmax=1 if boolean else None)
+        if boolean:
+            cmap = ListedColormap([TERRACOTTA(0.0), TERRACOTTA(1.0)])
+            norm = BoundaryNorm([-0.5, 0.5, 1.5], cmap.N)
+            image = ax.imshow(matrix, cmap=cmap, norm=norm, interpolation="nearest", aspect="auto")
+        else:
+            max_value = max(1, int(matrix.max()))
+            norm = PowerNorm(gamma=0.55, vmin=0, vmax=max_value)
+            image = ax.imshow(matrix, cmap=TERRACOTTA, norm=norm, interpolation="nearest", aspect="auto")
         ax.set_xticks(range(len(terms)), labels=terms, rotation=70, ha="right", fontsize=8)
         ax.set_yticks(range(len(terms)), labels=terms, fontsize=8)
         ax.set_title(f"{title} ({len(segments)} segments)")
         ax.set_xlabel("Next word" if name.startswith("directed") else "Word")
         ax.set_ylabel("Previous word" if name.startswith("directed") else "Word")
         colorbar_label = "Edge present (1) / absent (0)" if boolean else "Adjacent-pair count; diagonal is segment frequency when retained"
-        fig.colorbar(image, ax=ax, label=colorbar_label, shrink=0.8)
+        fig.colorbar(image, ax=ax, label=colorbar_label, shrink=0.8, ticks=[0, 1] if boolean else None)
         fig.savefig(heatmap_path, dpi=220)
         plt.close(fig)
         print(f"{name}: {matrix_path} | {heatmap_path}")
