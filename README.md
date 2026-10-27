@@ -8,6 +8,7 @@
 | `phrase_enhance.py` | Markdown，默认 `1.md` | 挖掘词组、合并原文匹配并重新生成六种矩阵及热力图 | `output/phrase/` |
 | `association.py` | 必填的计数矩阵 CSV | 计算 PPMI/NPMI 并输出热力图 | `output/` |
 | `phrase_entropy.py` | Markdown，默认 `1.md`；可选候选表 | 计算有向连续词组的左、右及联合边界熵，输出独立图、左右对照图和联合熵图 | `output/phrase_entropy/` |
+| `phrase_metrics.py` | Markdown，默认 `1.md`；可选候选表 | 输出四分格总览及左右熵、联合熵、熵差、PPMI、NPMI 独立图 | `output/phrase_metrics/` |
 | `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
 
 词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
@@ -37,12 +38,52 @@ python -m venv .venv
 
 ### 词组增强、左右熵与后续分析
 
+`phrase_metrics.py` 除四分格总览外，还分别输出五张图：左右熵对照图（每格左上为左熵、右下为右熵，二者共用 nat 色标）、联合边界熵、左熵减右熵、PPMI 和 NPMI。差值图以零为中心，正值为朱红、负值为青绿。对应 CSV 包含左熵、右熵、联合熵、左熵减右熵、PPMI、NPMI 和词组计数。独立图色系与四分格一致；未观察到的单元保持白色。若没有任何词轴，PNG 仍会生成并显示空轴提示。
+
 ```powershell
 .\.venv\Scripts\python.exe phrase_enhance.py 1.md --outdir output/phrase --top-words 0
 .\.venv\Scripts\python.exe phrase_entropy.py 1.md --outdir output/phrase_entropy --phrase-candidates output/phrase/phrase_candidates.csv
+.\.venv\Scripts\python.exe phrase_metrics.py 1.md --outdir output/phrase_metrics
 .\.venv\Scripts\python.exe association.py output/phrase/phrase_enhanced_directed_diag_zero.csv --outdir output/phrase/association
 .\.venv\Scripts\python.exe cluster_words.py output/phrase/phrase_enhanced_directed_diag_zero.csv --direction directed --clusters 6 --outdir output/phrase/clusters
 ```
+
+
+#### `phrase_metrics.py` 使用说明
+
+该脚本从 Markdown 原文提取有向连续词组 `(A,B)`，在同一词轴上计算边界熵和关联度。矩阵行表示前词 `A`，列表示后词 `B`；`A → B` 与 `B → A` 是不同词组。PPMI/NPMI 使用 `association.py` 相同的行列边际定义；熵使用 `phrase_entropy.py` 的上下文和边界规则，单位为 nat。
+
+```powershell
+.\.venv\Scripts\python.exe phrase_metrics.py 1.md --outdir output/phrase_metrics --plot-top-words 0
+```
+
+可选参数：
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `input` | `1.md` | 输入 Markdown 文件 |
+| `--outdir` | `output/phrase_metrics` | 输出目录，不存在时自动创建 |
+| `--prefix` | 输入文件名（不含扩展名） | 输出文件名前缀 |
+| `--phrase-candidates` | 不启用 | 候选 CSV；读取 `left`、`right` 两列以限制统计的有序词组 |
+| `--plot-min-phrase-frequency` | `0` | 只筛选图片：正数 `N` 隐藏出现次数少于 `N` 的词组，并仅显示达标词组涉及的词轴；所有 CSV 始终保存完整统计矩阵 |
+| `--min-length` | `3` | 词组两端词语的最小长度；停用词仍会排除 |
+| `--plot-top-words` | `0` | 只限制图片显示的词轴数；`0` 显示完整词轴，正数按词组计数的入度加出度选取。不会改变 CSV |
+| `--figure-size` | 自动 | 图片宽度/高度（英寸）；不指定时按显示词数估算 |
+
+每次运行输出 7 个矩阵 CSV、1 份边界报告和 6 张 PNG。矩阵 CSV 的空单元表示该指标未定义或该词组未观察到，不会以 0 代替：
+
+| 文件后缀 | 内容 |
+| --- | --- |
+| `_phrase_counts.csv` | 有向连续词组计数 |
+| `_left_entropy.csv`、`_right_entropy.csv` | 左、右边界熵 |
+| `_joint_entropy.csv` | 左右边界联合熵 `H(L,R | A B)`，不是左右熵之和 |
+| `_left_minus_right_entropy.csv` | 左熵减右熵；仅在左右熵都有定义时计算 |
+| `_ppmi.csv`、`_npmi.csv` | 词组的 PPMI 和 NPMI |
+| `_phrase_boundaries.csv` | 每个词组的左右上下文计数及联合边界摘要 |
+
+图片文件为 `_four_metrics_heatmap.png`、`_left_right_entropy_heatmap.png`、`_joint_entropy_heatmap.png`、`_left_minus_right_entropy_heatmap.png`、`_ppmi_heatmap.png` 和 `_npmi_heatmap.png`。四分格总览中每个词组占一个格子：左上为左熵、右上为右熵、左下为 PPMI、右下为 NPMI。单独的左右熵对照图每格分成两个三角形，左上三角显示左熵、右下三角显示右熵，两者共用同一色标；它不表示相减。左熵减右熵由独立差值图显示，以 0 为中心，负值为青绿、正值为朱红。另三张独立图分别展示联合熵、PPMI 和 NPMI。
+
+左熵、右熵和 PPMI 使用从暖白 `#F3E6E2` 经灰朱 `#D69588` 到深朱 `#A64036` 的顺序色阶；左右熵在对照图中共享同一范围。差值与 NPMI 使用青绿 `#2F6F73`、暖灰 `#E9E4E1`、深朱 `#A64036` 的发散色阶，其中 NPMI 固定范围为 `[-1, 1]`。未观察/缺失单元显示为白色。`--plot-top-words 0` 时保留全部基础词轴，包括没有任何合格邻接的词；这些单元为空白。没有有效词轴时仍会生成所有 PNG，并在图中标明空轴。
 
 这里的 `--top-words 0` 保留全部满足片段频率要求的词和词组，增强热力图仍默认只显示高频 40 项。终端会打印候选数、实际合并次数、保留词数和输出路径。词表很小时，应相应调低 `--clusters`。
 
@@ -259,7 +300,7 @@ $$
 
 脚本按基础规则清理 Markdown、去重段落，并保留停用词/短词识别原始相邻边界。不会跨越标点分段、段落或被过滤 token 拼接词组。每次真实出现独立计数；左右单侧熵忽略缺失的那一侧，并在报告记录 `*_missing_count`。联合熵则将片段边界分别记作 `<BOS>`（左边界）和 `<EOS>`（右边界），把每次出现的 `(X,Y)` 都纳入联合分布。无上下文时单侧熵留空；只有一种上下文时熵为真实的 `0`。无该短语的位置标灰；单侧无上下文的熵格也标灰。
 
-输出文件均使用输入文件名作为默认前缀：`{prefix}_phrase_counts.csv`、`{prefix}_left_entropy.csv`、`{prefix}_right_entropy.csv`、`{prefix}_joint_entropy.csv`、`{prefix}_phrase_boundaries.csv`，以及六张 PNG。原始四张图为 `{prefix}_left_entropy_heatmap.png`、`{prefix}_right_entropy_heatmap.png`、`{prefix}_left_right_entropy_heatmap.png` 和 `{prefix}_joint_entropy_heatmap.png`；额外两张删空轴图为 `{prefix}_nonempty_left_right_entropy_heatmap.png` 和 `{prefix}_nonempty_joint_entropy_heatmap.png`。左、右熵各有独立图；左右对照图每格分为两个三角形：左上表示左熵，右下表示右熵；共享同一色阶，缺失值标灰。联合熵另图显示。所有图只表示有向顺序，不生成无向图。默认最多显示参与词组次数最多的 40 个词。原始四图保留所选词轴上的全部词；额外两图只删除显示子矩阵中整行和整列均无邻接的词，有一条邻接的词仍保留，不做邻接核心筛选。若筛选后的词之间没有邻接，删空轴图会回退显示计数最高词对的两个端点。CSV 和熵计算不受绘图筛选影响。
+输出文件均使用输入文件名作为默认前缀：`{prefix}_phrase_counts.csv`、`{prefix}_left_entropy.csv`、`{prefix}_right_entropy.csv`、`{prefix}_joint_entropy.csv`、`{prefix}_phrase_boundaries.csv`，以及六张 PNG。原始四张图为 `{prefix}_left_entropy_heatmap.png`、`{prefix}_right_entropy_heatmap.png`、`{prefix}_left_right_entropy_heatmap.png` 和 `{prefix}_joint_entropy_heatmap.png`；额外两张删空轴图为 `{prefix}_nonempty_left_right_entropy_heatmap.png` 和 `{prefix}_nonempty_joint_entropy_heatmap.png`。左、右熵各有独立图；左右对照图每格分为两个三角形：左上表示左熵，右下表示右熵；共享同一色阶，缺失值标灰。联合熵另图显示。所有图只表示有向顺序，不生成无向图。默认保留全部真实出现的合格双词组（包括仅出现 1 次的词组），不做默认频次截断。`--min-phrase-frequency 0`（默认，省略参数等效）时，四张原始图及 CSV 使用清理、段落去重后的完整基础词表（仍沿用最小词长和停用词规则），不从词组端点反推词表：低频词、单独出现的词、没有合格邻接的词都保留原始词轴，空格标灰。额外两张图只从同一矩阵删除整行和整列均无邻接的词，保留只有一条邻接的词，不重新筛选词组、不重算熵、不修改统计值或用零替代缺失值。全部无邻接时，删空轴图显示无非空词轴提示，不回退引入其他词。默认 `--plot-top-words 0` 显示完整词表；仅显式指定正数时限制图中显示数量，不影响 CSV。传入 `--min-phrase-frequency N` 且 N > 0 时，先保留出现次数至少为 N 的词组，再将全部 CSV 和六张图的词轴缩减为这些词组包含的词；即使显式传入 `1` 也会删除不参与任何合格词组的词轴。若没有词组满足阈值，则 CSV 仅含表头，六张图显示无非空词轴提示。候选表本身只限制词组，不缩减基础词轴。
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -267,9 +308,9 @@ $$
 | `--outdir` | `output/phrase_entropy` | 输出目录 |
 | `--prefix` | 输入文件名去掉扩展名 | 输出文件名前缀 |
 | `--phrase-candidates` | 不启用 | 可选候选 CSV，须有 `left`、`right` 列 |
-| `--min-phrase-frequency` | `3` | 去重后最小词组出现次数 |
+| `--min-phrase-frequency` | `0` | `0` 不做频次筛选、不删基础词轴；N > 0 时筛掉出现次数不足 N 的词组，并删除不参与保留词组的词轴；不接受负数 |
 | `--min-length` | `3` | 词组词元最小长度；停用词仍排除 |
-| `--plot-top-words` | `40` | 图中显示词数上限；`0` 显示全部 |
+| `--plot-top-words` | `0` | 默认显示完整基础词表（含空轴）；正数才限制显示数量 |
 | `--figure-size` | 按显示词数计算 | 单张图宽度，单位为英寸 |
 
 ## 词语聚类：cluster_words.py
@@ -331,6 +372,7 @@ $$
 | `phrase_enhance.py` | 原文词组挖掘、合并、增强矩阵及热力图 |
 | `association.py` | PPMI/NPMI 矩阵、热力图和对照图 |
 | `phrase_entropy.py` | 原文连续词组左/右/联合边界熵矩阵、报告和六张有向热力图（四张原轴图、两张删全空行列图） |
+| `phrase_metrics.py` | 原文左/右熵及 PPMI/NPMI 对齐矩阵、一张四分格热力图 |
 | `cluster_words.py` | 聚类分组 CSV 和树状图 |
 | `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
 | `test_association.py` | PPMI/NPMI 矩阵与 CLI 回归测试 |
@@ -355,6 +397,7 @@ $$
 ```powershell
 .\.venv\Scripts\python.exe -m unittest test_phrase_enhance -v
 .\.venv\Scripts\python.exe -m unittest test_association test_phrase_entropy -v
+.\.venv\Scripts\python.exe -m unittest test_phrase_metrics -v
 ```
 
 测试覆盖词组原文边界、停用词隔断、段落去重、左右及联合熵的有序词对与边界处理、关联度计算，以及 CSV/PNG 输出和命令行参数校验。测试使用临时目录，不依赖 `1.md` 的具体内容。

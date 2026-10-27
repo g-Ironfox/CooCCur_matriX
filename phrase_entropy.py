@@ -85,8 +85,17 @@ def collect_contexts(markdown: str, min_length: int = 3,
     return results
 
 
-def build_matrices(phrases: dict[Pair, PhraseContexts]):
-    words = sorted({word for pair in phrases for word in pair})
+def collect_vocabulary(markdown: str, min_length: int = 3) -> set[str]:
+    """Keep every eligible source word, including words with no phrase edges."""
+    return {word.casefold()
+            for paragraph in co.unique_paragraphs(co.markdown_to_text(markdown))
+            for word in co.WORD_RE.findall(paragraph)
+            if len(word) >= min_length and word.casefold() not in co.STOPWORDS}
+
+
+def build_matrices(phrases: dict[Pair, PhraseContexts],
+                   vocabulary: set[str] | None = None):
+    words = sorted({word for pair in phrases for word in pair} | (vocabulary or set()))
     indices = {word: index for index, word in enumerate(words)}
     counts = np.zeros((len(words), len(words)), dtype=np.int64)
     left = np.full(counts.shape, np.nan)
@@ -139,8 +148,13 @@ def plot_entropy(path: Path, words: list[str], values: np.ndarray,
     fig, ax = plt.subplots(figsize=(figure_size, figure_size * 0.88), constrained_layout=True)
     cmap = plt.get_cmap("YlOrRd").copy()
     cmap.set_bad("#d9d9d9")
-    image = ax.imshow(np.ma.masked_invalid(values), cmap=cmap, vmin=0, vmax=vmax,
-                      interpolation="nearest", aspect="auto")
+    if len(words):
+        image = ax.imshow(np.ma.masked_invalid(values), cmap=cmap, vmin=0, vmax=vmax,
+                          interpolation="nearest", aspect="auto")
+    else:
+        image = ScalarMappable(norm=Normalize(vmin=0, vmax=vmax), cmap=cmap)
+        ax.text(0.5, 0.5, "No nonempty phrase axes", ha="center", va="center",
+                transform=ax.transAxes)
     ax.set_xticks(range(len(words)), labels=words, rotation=70, ha="right", fontsize=8)
     ax.set_yticks(range(len(words)), labels=words, fontsize=8)
     ax.set_xlabel("Second word B (ordered phrase A -> B)")
@@ -162,23 +176,38 @@ def plot_left_right_heatmap(path: Path, words: list[str], left: np.ndarray,
     """Draw both directional entropies as diagonal halves of each matrix cell."""
     cmap = plt.get_cmap("YlOrRd").copy()
     norm = Normalize(vmin=0, vmax=vmax)
+    # Missing triangles use the axes background. Only draw observed values:
+    # a full vocabulary can be large while its adjacency is very sparse.
     vertices, colors = [], []
-    for row in range(len(words)):
-        for column in range(len(words)):
-            x0, x1 = column - 0.5, column + 0.5
-            y0, y1 = row - 0.5, row + 0.5
-            vertices.extend(([(x0, y0), (x1, y0), (x0, y1)],
-                             [(x1, y0), (x1, y1), (x0, y1)]))
-            for matrix in (left, right):
-                value = matrix[row, column]
-                colors.append(cmap(norm(value)) if np.isfinite(value) else "#d9d9d9")
+    for matrix, upper_left in ((left, True), (right, False)):
+        rows, columns = np.nonzero(np.isfinite(matrix))
+        if not len(rows):
+            continue
+        x0, x1 = columns - 0.5, columns + 0.5
+        y0, y1 = rows - 0.5, rows + 0.5
+        if upper_left:
+            triangles = np.stack((np.column_stack((x0, y0)),
+                                  np.column_stack((x1, y0)),
+                                  np.column_stack((x0, y1))), axis=1)
+        else:
+            triangles = np.stack((np.column_stack((x1, y0)),
+                                  np.column_stack((x1, y1)),
+                                  np.column_stack((x0, y1))), axis=1)
+        vertices.append(triangles)
+        colors.append(cmap(norm(matrix[rows, columns])))
 
     fig, ax = plt.subplots(figsize=(figure_size, figure_size), constrained_layout=True)
-    collection = PolyCollection(vertices, facecolors=colors, edgecolors="white",
-                                linewidths=0.25, antialiaseds=False)
-    ax.add_collection(collection)
-    ax.set_xlim(-0.5, len(words) - 0.5)
-    ax.set_ylim(len(words) - 0.5, -0.5)
+    ax.set_facecolor("#d9d9d9")
+    if vertices:
+        collection = PolyCollection(np.concatenate(vertices), facecolors=np.concatenate(colors),
+                                    edgecolors="white", linewidths=0.25, antialiaseds=False)
+        ax.add_collection(collection)
+    extent = len(words) - 0.5 if words else 0.5
+    ax.set_xlim(-0.5, extent)
+    ax.set_ylim(extent, -0.5)
+    if not words:
+        ax.text(0.5, 0.5, "No nonempty phrase axes", ha="center", va="center",
+                transform=ax.transAxes)
     ax.set_aspect("equal")
     ax.set_xticks(range(len(words)), labels=words, rotation=70, ha="right", fontsize=8)
     ax.set_yticks(range(len(words)), labels=words, fontsize=8)
@@ -206,25 +235,12 @@ def select_plot_indices(counts: np.ndarray, top_words: int) -> np.ndarray:
 
 
 def select_nonempty_indices(counts: np.ndarray, indices: np.ndarray) -> np.ndarray:
-    """Remove only rows and columns with no adjacency in the displayed subgraph."""
+    """Delete only axes with neither incoming nor outgoing displayed adjacency."""
     if not len(indices):
-        if not counts.size:
-            return indices
-        row, column = np.unravel_index(np.argmax(counts), counts.shape)
-        return np.array(sorted({row, column}))
+        return indices
     displayed = counts[np.ix_(indices, indices)]
     active = (displayed.sum(axis=0) + displayed.sum(axis=1)) > 0
-    nonempty = indices[active]
-    if len(nonempty):
-        return nonempty
-    if displayed.size and displayed.max() > 0:
-        row, column = np.unravel_index(np.argmax(displayed), displayed.shape)
-        return np.unique(indices[[row, column]])
-    if counts.size and counts.max() > 0:
-        row, column = np.unravel_index(np.argmax(counts), counts.shape)
-        return np.array(sorted({row, column}))
-    return indices
-
+    return indices[active]
 
 
 def plot_heatmaps(outdir: Path, prefix: str, words: list[str], counts: np.ndarray,
@@ -271,15 +287,19 @@ def main() -> None:
     parser.add_argument("--outdir", default="output/phrase_entropy", help="Output directory")
     parser.add_argument("--prefix", help="Output filename prefix (default: input filename stem)")
     parser.add_argument("--phrase-candidates", help="Optional phrase_candidates.csv; analyze all listed ordered pairs")
-    parser.add_argument("--min-phrase-frequency", type=int, default=3,
-                        help="Minimum raw occurrence count after paragraph deduplication (default: 3)")
+    parser.add_argument("--min-phrase-frequency", type=int, default=0,
+                        help="Minimum phrase count after paragraph deduplication; "
+                             "0 keeps all phrases and source word axes; positive values "
+                             "also prune words absent from retained phrases (default: 0)")
     parser.add_argument("--min-length", type=int, default=3, help="Minimum phrase token length (default: 3)")
-    parser.add_argument("--plot-top-words", type=int, default=40,
-                        help="Display top N words by qualifying phrase counts; 0 for all (default: 40)")
+    parser.add_argument("--plot-top-words", type=int, default=0,
+                        help="Optional display limit by phrase counts; 0 keeps the full source vocabulary (default: 0)")
     parser.add_argument("--figure-size", type=float, help="Figure width in inches")
     args = parser.parse_args()
-    if args.min_phrase_frequency < 1 or args.min_length < 1:
-        parser.error("--min-phrase-frequency and --min-length must be >= 1")
+    if args.min_phrase_frequency < 0:
+        parser.error("--min-phrase-frequency must be >= 0")
+    if args.min_length < 1:
+        parser.error("--min-length must be >= 1")
     if args.plot_top_words < 0:
         parser.error("--plot-top-words must be >= 0")
     if args.figure_size is not None and (not math.isfinite(args.figure_size) or args.figure_size <= 0):
@@ -290,11 +310,18 @@ def main() -> None:
     input_path = Path(args.input)
     try:
         candidates = read_candidates(Path(args.phrase_candidates)) if args.phrase_candidates else None
-        phrases = collect_contexts(input_path.read_text(encoding="utf-8-sig"), args.min_length, candidates)
-        phrases = {pair: stats for pair, stats in phrases.items() if stats.count >= args.min_phrase_frequency}
-        if not phrases:
-            raise ValueError("no qualifying phrases; lower --min-phrase-frequency/--min-length or check candidates")
-        words, counts, left, right, joint = build_matrices(phrases)
+        markdown = input_path.read_text(encoding="utf-8-sig")
+        vocabulary = collect_vocabulary(markdown, args.min_length)
+        if not vocabulary:
+            raise ValueError("no qualifying words; lower --min-length or check input")
+        phrases = collect_contexts(markdown, args.min_length, candidates)
+        if args.min_phrase_frequency > 0:
+            phrases = {pair: stats for pair, stats in phrases.items()
+                       if stats.count >= args.min_phrase_frequency}
+            # A positive frequency threshold narrows both the phrases and axes.
+            words, counts, left, right, joint = build_matrices(phrases)
+        else:
+            words, counts, left, right, joint = build_matrices(phrases, vocabulary)
     except (OSError, ValueError, csv.Error) as error:
         parser.error(str(error))
 
@@ -311,7 +338,11 @@ def main() -> None:
     paths = plot_heatmaps(
         outdir, prefix, words, counts, left, right, joint, args.plot_top_words,
         args.figure_size)
-    print(f"Directed phrases: {len(phrases)}; words: {len(words)}")
+    print(f"Directed phrases: {len(phrases)}; source vocabulary words: {len(vocabulary)}; "
+          f"matrix words: {len(words)}")
+    displayed = select_plot_indices(counts, args.plot_top_words)
+    print(f"Original heatmap axes: {len(displayed)}; "
+          f"nonempty heatmap axes: {len(select_nonempty_indices(counts, displayed))}")
     print(f"Phrase boundary statistics: {report}")
     for side, path in paths.items():
         print(f"{side.capitalize()} entropy heatmap: {path}")
