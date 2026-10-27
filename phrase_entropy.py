@@ -192,14 +192,48 @@ def plot_left_right_heatmap(path: Path, words: list[str], left: np.ndarray,
     plt.close(fig)
 
 
+
+def select_plot_indices(counts: np.ndarray, top_words: int) -> np.ndarray:
+    """Choose the base display nodes without removing empty axes."""
+    indices = np.arange(counts.shape[0])
+    if top_words and top_words < len(indices):
+        strength = counts.sum(axis=0) + counts.sum(axis=1)
+        indices = np.argsort(-strength, kind="stable")[:top_words]
+    if not len(indices) and counts.size:
+        row, column = np.unravel_index(np.argmax(counts), counts.shape)
+        indices = np.array([row, column])
+    return indices
+
+
+def select_nonempty_indices(counts: np.ndarray, indices: np.ndarray) -> np.ndarray:
+    """Remove only rows and columns with no adjacency in the displayed subgraph."""
+    if not len(indices):
+        if not counts.size:
+            return indices
+        row, column = np.unravel_index(np.argmax(counts), counts.shape)
+        return np.array(sorted({row, column}))
+    displayed = counts[np.ix_(indices, indices)]
+    active = (displayed.sum(axis=0) + displayed.sum(axis=1)) > 0
+    nonempty = indices[active]
+    if len(nonempty):
+        return nonempty
+    if displayed.size and displayed.max() > 0:
+        row, column = np.unravel_index(np.argmax(displayed), displayed.shape)
+        return np.unique(indices[[row, column]])
+    if counts.size and counts.max() > 0:
+        row, column = np.unravel_index(np.argmax(counts), counts.shape)
+        return np.array(sorted({row, column}))
+    return indices
+
+
+
 def plot_heatmaps(outdir: Path, prefix: str, words: list[str], counts: np.ndarray,
                   left: np.ndarray, right: np.ndarray, joint: np.ndarray, top_words: int,
                   figure_size: float | None = None) -> dict[str, Path]:
-    # Rank for display only: entropy always uses every original context.
-    indices = np.arange(len(words))
-    if top_words and top_words < len(words):
-        strength = counts.sum(axis=0) + counts.sum(axis=1)
-        indices = np.argsort(-strength, kind="stable")[:top_words]
+    # The four regular plots retain the complete selected axes. The two
+    # additional nonempty plots remove only rows/columns without adjacency.
+    indices = select_plot_indices(counts, top_words)
+    nonempty_indices = select_nonempty_indices(counts, indices)
     plot_words = [words[index] for index in indices]
     finite = np.concatenate([matrix[np.isfinite(matrix)]
                              for matrix in (left, right, joint)])
@@ -218,6 +252,15 @@ def plot_heatmaps(outdir: Path, prefix: str, words: list[str], counts: np.ndarra
     plot_left_right_heatmap(paths["left/right"], plot_words,
                             left[subset], right[subset], size, vmax)
     plot_entropy(paths["joint"], plot_words, joint[subset], "joint", size, vmax)
+
+    nonempty_words = [words[index] for index in nonempty_indices]
+    nonempty_subset = np.ix_(nonempty_indices, nonempty_indices)
+    paths["nonempty left/right"] = outdir / f"{prefix}_nonempty_left_right_entropy_heatmap.png"
+    paths["nonempty joint"] = outdir / f"{prefix}_nonempty_joint_entropy_heatmap.png"
+    plot_left_right_heatmap(paths["nonempty left/right"], nonempty_words,
+                            left[nonempty_subset], right[nonempty_subset], size, vmax)
+    plot_entropy(paths["nonempty joint"], nonempty_words,
+                 joint[nonempty_subset], "joint", size, vmax)
     return paths
 
 
@@ -265,8 +308,9 @@ def main() -> None:
         path = outdir / f"{prefix}_{name}.csv"
         write_matrix(path, words, matrix)
         print(f"{name}: {path}")
-    paths = plot_heatmaps(outdir, prefix, words, counts, left, right, joint,
-                          args.plot_top_words, args.figure_size)
+    paths = plot_heatmaps(
+        outdir, prefix, words, counts, left, right, joint, args.plot_top_words,
+        args.figure_size)
     print(f"Directed phrases: {len(phrases)}; words: {len(words)}")
     print(f"Phrase boundary statistics: {report}")
     for side, path in paths.items():

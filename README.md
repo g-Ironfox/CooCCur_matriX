@@ -259,7 +259,7 @@ $$
 
 脚本按基础规则清理 Markdown、去重段落，并保留停用词/短词识别原始相邻边界。不会跨越标点分段、段落或被过滤 token 拼接词组。每次真实出现独立计数；左右单侧熵忽略缺失的那一侧，并在报告记录 `*_missing_count`。联合熵则将片段边界分别记作 `<BOS>`（左边界）和 `<EOS>`（右边界），把每次出现的 `(X,Y)` 都纳入联合分布。无上下文时单侧熵留空；只有一种上下文时熵为真实的 `0`。无该短语的位置标灰；单侧无上下文的熵格也标灰。
 
-输出文件均使用输入文件名作为默认前缀：`{prefix}_phrase_counts.csv`、`{prefix}_left_entropy.csv`、`{prefix}_right_entropy.csv`、`{prefix}_joint_entropy.csv`、`{prefix}_phrase_boundaries.csv`，以及四张 PNG：`{prefix}_left_entropy_heatmap.png`、`{prefix}_right_entropy_heatmap.png`、`{prefix}_left_right_entropy_heatmap.png` 和 `{prefix}_joint_entropy_heatmap.png`。左、右熵各有独立图；左右对照图是额外视图，每格分为两个三角形：左上表示左熵，右下表示右熵；共享同一色阶，缺失值标灰。联合熵另图显示。所有图共享词序，只表示有向顺序，不生成无向图。默认显示参与词组次数最多的 40 个词；`--plot-top-words 0` 显示全部，显示筛选不影响熵计算。
+输出文件均使用输入文件名作为默认前缀：`{prefix}_phrase_counts.csv`、`{prefix}_left_entropy.csv`、`{prefix}_right_entropy.csv`、`{prefix}_joint_entropy.csv`、`{prefix}_phrase_boundaries.csv`，以及六张 PNG。原始四张图为 `{prefix}_left_entropy_heatmap.png`、`{prefix}_right_entropy_heatmap.png`、`{prefix}_left_right_entropy_heatmap.png` 和 `{prefix}_joint_entropy_heatmap.png`；额外两张删空轴图为 `{prefix}_nonempty_left_right_entropy_heatmap.png` 和 `{prefix}_nonempty_joint_entropy_heatmap.png`。左、右熵各有独立图；左右对照图每格分为两个三角形：左上表示左熵，右下表示右熵；共享同一色阶，缺失值标灰。联合熵另图显示。所有图只表示有向顺序，不生成无向图。默认最多显示参与词组次数最多的 40 个词。原始四图保留所选词轴上的全部词；额外两图只删除显示子矩阵中整行和整列均无邻接的词，有一条邻接的词仍保留，不做邻接核心筛选。若筛选后的词之间没有邻接，删空轴图会回退显示计数最高词对的两个端点。CSV 和熵计算不受绘图筛选影响。
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -269,7 +269,7 @@ $$
 | `--phrase-candidates` | 不启用 | 可选候选 CSV，须有 `left`、`right` 列 |
 | `--min-phrase-frequency` | `3` | 去重后最小词组出现次数 |
 | `--min-length` | `3` | 词组词元最小长度；停用词仍排除 |
-| `--plot-top-words` | `40` | 图中显示词数；`0` 显示全部 |
+| `--plot-top-words` | `40` | 图中显示词数上限；`0` 显示全部 |
 | `--figure-size` | 按显示词数计算 | 单张图宽度，单位为英寸 |
 
 ## 词语聚类：cluster_words.py
@@ -330,7 +330,7 @@ $$
 | `cooccurrence.py` | 文本清理、分词、基础矩阵及热力图 |
 | `phrase_enhance.py` | 原文词组挖掘、合并、增强矩阵及热力图 |
 | `association.py` | PPMI/NPMI 矩阵、热力图和对照图 |
-| `phrase_entropy.py` | 原文连续词组左/右/联合边界熵矩阵、报告和两张有向热力图 |
+| `phrase_entropy.py` | 原文连续词组左/右/联合边界熵矩阵、报告和六张有向热力图（四张原轴图、两张删全空行列图） |
 | `cluster_words.py` | 聚类分组 CSV 和树状图 |
 | `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
 | `test_association.py` | PPMI/NPMI 矩阵与 CLI 回归测试 |
