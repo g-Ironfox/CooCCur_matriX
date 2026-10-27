@@ -9,7 +9,10 @@
 | `association.py` | 必填的计数矩阵 CSV | 计算 PPMI/NPMI 并输出热力图 | `output/` |
 | `phrase_entropy.py` | Markdown，默认 `1.md`；可选候选表 | 计算有向连续词组的左、右及联合边界熵，输出独立图、左右对照图和联合熵图 | `output/phrase_entropy/` |
 | `phrase_metrics.py` | Markdown，默认 `1.md`；可选候选表 | 输出四分格总览及左右熵、联合熵、熵差、PPMI、NPMI 独立图 | `output/phrase_metrics/` |
+| `select_bigrams.py` | Markdown，默认 `1.md` | 按频次、PPMI/NPMI 和低边界熵筛选有向二词候选 | `output/bigram_candidates/` |
+| `trigram_potential.py` | Markdown 和二词候选 CSV | 分析候选二词组的左右三词扩展，输出频次、左熵、右熵对照柱状图 | `output/trigram_potential/` |
 | `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
+| `bool_hop_stability.py` | 有向或无向布尔邻接矩阵 CSV | 计算累计 Boolean n-hop 可达关系的稳定 hop，并逐步输出可达、加权矩阵和热力图 | `output/bool_hop_stability/` |
 
 词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
 
@@ -44,9 +47,75 @@ python -m venv .venv
 .\.venv\Scripts\python.exe phrase_enhance.py 1.md --outdir output/phrase --top-words 0
 .\.venv\Scripts\python.exe phrase_entropy.py 1.md --outdir output/phrase_entropy --phrase-candidates output/phrase/phrase_candidates.csv
 .\.venv\Scripts\python.exe phrase_metrics.py 1.md --outdir output/phrase_metrics
+.\.venv\Scripts\python.exe select_bigrams.py 1.md --outdir output/bigram_candidates
 .\.venv\Scripts\python.exe association.py output/phrase/phrase_enhanced_directed_diag_zero.csv --outdir output/phrase/association
 .\.venv\Scripts\python.exe cluster_words.py output/phrase/phrase_enhanced_directed_diag_zero.csv --direction directed --clusters 6 --outdir output/phrase/clusters
 ```
+
+`select_bigrams.py` 默认要求二词至少出现 3 次、PPMI ≥ 0.5、NPMI ≥ 0.2，且左熵、右熵或联合熵至少一项 ≤ 0.5 nat。阈值可分别通过 `--min-count`、`--min-ppmi`、`--min-npmi` 和 `--max-entropy` 调整。输出 CSV 按 NPMI、PPMI 和频次排序，包含主要左右上下文；`left`、`right` 列可直接交给 `phrase_entropy.py --phrase-candidates` 复核。
+
+用筛出的二词候选继续检查三词扩展：
+
+```powershell
+.\.venv\Scripts\python.exe trigram_potential.py 1.md --phrase-candidates output/bigram_candidates/1_bigram_candidates.csv
+```
+
+脚本逐个查找左扩展 `X A B` 和右扩展 `A B Y`，默认只保留至少出现 2 次的三词组合。输出 `_trigram_potential.csv` 包含三词计数、段落频次、原二词的左右边界熵与联合边界熵，以及以全语料连续三词窗口为事件空间计算的 PPMI/NPMI。静态 PNG 按三词频次排序，分别显示频次柱状图和左右熵并排对照图；频次柱颜色表示 NPMI。频次与熵采用独立横轴，熵单位为 nat。`--min-trigram-count` 调整频次下限，`--top` 调整图中展示数量（0 表示全部）。
+
+### 有向或无向布尔图的稳定 hop
+
+`bool_hop_stability.py` 读取带顶点标签的方阵 CSV，同时支持有向图和无向图，不要求对称。行是出发词，列是目标词；`B[i,j] > 0` 表示从 i 到 j 有边，反向是否有边由 `B[j,i]` 决定。输入对角线仍须为零，暂不支持自环。
+
+```powershell
+.\.venv\Scripts\python.exe bool_hop_stability.py output/undirected_bool.csv
+```
+
+分析有向图时直接传入有向邻接矩阵，无需新增参数。建议指定独立输出目录：
+
+```powershell
+.\.venv\Scripts\python.exe bool_hop_stability.py output/base/directed_bool.csv --outdir output/directed_bool_hop_stability
+```
+
+命令格式：
+
+```text
+python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES]
+```
+
+| 参数 | 必填 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `input` | 是 | 无 | 带标签的方阵邻接矩阵 CSV |
+| `--outdir DIR` | 否 | `output/bool_hop_stability/` | 每步矩阵和热力图的输出目录 |
+| `--cell-size INCHES` | 否 | `0.35` | 热力图单格目标尺寸，单位英寸；图像画布最大为 18 英寸 |
+
+CSV 第一行是列标签，第一列是行标签；左上角可以写 `word` 或 `vertex`。行标签必须与列标签按相同顺序对应。示例：
+
+```csv
+word,alpha,beta,gamma
+alpha,0,1,0
+beta,1,0,1
+gamma,0,1,0
+```
+
+矩阵必须是方阵且对角线为零；无向图矩阵对称，有向图可以不对称。脚本按 `B > 0` 转换为布尔邻接矩阵。
+
+脚本按 `R_n = B ∨ B² ∨ … ∨ Bⁿ` 计算累计可达矩阵，并使用布尔乘法迭代 `R_(k+1) = R_k ∨ (R_k @ B)`。当 `R_(k+1) = R_k` 时，返回 k 作为稳定步数，不额外输出重复的第 k+1 步。停止判断包含对角线：例如有向三环在第 3 步才产生回到自身的可达项，因此稳定步数为 3。无边图按第 1 步已稳定处理。
+
+输出目录中每个 hop 都有一份带词名行列标签的 `reachability_NNN.csv` 和对应的 `reachability_NNN.png` 热力图；稳定步的 PNG 标有 `(stable)`。有向输入的结果保留方向，不会自动补反向边。热力图使用从 0 开始的数字顶点编号，词很多时每隔若干顶点显示一个编号。`--cell-size` 控制画布大小，画布最大为 18 英寸。可用 `--outdir` 指定输出目录。
+
+每一轮还输出加权矩阵 `weighted_NNN.csv` 和热力图 `weighted_NNN.png`：
+
+```text
+S_k = k·B¹ + (k−1)·B² + … + Bᵏ
+S_1 = B
+S_2 = 2B + B²
+S_3 = 3B + 2B² + B³
+```
+
+这里 `Bⁿ` 沿用布尔矩阵幂：恰好 n 步存在走法时为 1，否则为 0；各项乘权和相加使用普通整数运算。同一对词在多个 hop 可达会累加，较早的 hop 权重更高。k 每轮变化，之前各项的系数都会增加。实现使用等价递推 `C_k = C_(k−1) + Bᵏ`、`S_k = S_(k−1) + C_k`（初值均为零），每轮结果与按当前 k 重新求和完全一致，无需重算之前的幂。
+
+加权图值越大颜色越深，色条显示该轮数值范围。加权矩阵在布尔可达关系稳定的那一轮停止输出；这只是计算终点，加权数值本身不保证稳定。最终结果就是最后一轮的 `weighted_NNN.csv`。此功能仍使用完整矩阵存储，三万顶点的计算和绘图内存问题尚未解决。
+
 
 
 #### `phrase_metrics.py` 使用说明
@@ -142,19 +211,19 @@ beta,1,0
 ## 单词共现：cooccurrence.py
 
 ```powershell
-.\.venv\Scripts\python.exe cooccurrence.py 1.md --outdir output/base --top-words 0 --min-frequency 1 --figure-size 28
+.\.venv\Scripts\python.exe cooccurrence.py 1.md --outdir output/base --plot-top-words 0 --min-frequency 1 --figure-size 28
 ```
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
 | `input` | `1.md` | 输入 Markdown 路径 |
 | `--outdir` | `output` | 输出目录 |
-| `--top-words` | `40` | 保留片段频率最高的 N 个词；`0` 表示不限数量 |
+| `--plot-top-words` | `40` | 热力图显示片段频率最高的 N 个词；`0` 显示全部，不影响 CSV |
 | `--min-frequency` | `2` | 词至少出现于多少个片段，整数且至少为 1 |
 | `--min-length` | `3` | 最小词长，整数且至少为 1 |
 | `--figure-size` | 按词数计算 | 六张热力图的宽度，单位为英寸 |
 
-上例连仅出现于一个片段的词也保留。基础脚本的热力图绘制整个已筛选词表，没有 `--plot-top-words` 参数；词多时可先限制 `--top-words`，或使用支持独立控制显示数量的词组/关联度脚本。
+上例连仅出现于一个片段的词也写入完整矩阵 CSV，并在热力图中显示全部词。CSV 始终包含所有满足 `--min-frequency` 的词；`--plot-top-words` 只限制热力图显示的词数，正数按片段频率选取，`0` 显示完整词表。
 
 ## 词组增强：phrase_enhance.py
 
@@ -343,7 +412,7 @@ $$
 - `output/phrase/clusters/enhanced_clusters.csv`：`word,cluster` 两列，按簇编号和词排序。
 - `output/phrase/clusters/enhanced_dendrogram.png`：树状图，纵轴为平均连接余弦距离。叶子文字按簇着色；同簇子树的分支使用对应颜色，跨簇分支为灰色。超过 6 簇时颜色循环使用，具体归属以 CSV 为准。
 
-这一步比较“是否连接到相似的邻词”，不直接按两个词之间的边权分组，也不保证每簇对应一个语义主题。`--clusters` 只改变组数；要增加可聚类词数，需要先在基础/增强脚本中调整 `--top-words` 或 `--min-frequency`，重新生成 CSV。
+这一步比较“是否连接到相似的邻词”，不直接按两个词之间的边权分组，也不保证每簇对应一个语义主题。`--clusters` 只改变组数；基础共现 CSV 的词数由 `--min-frequency` 决定，增强 CSV 的词数可由 `--top-words` 或 `--min-frequency` 调整，重新生成 CSV 后再聚类。
 
 ## 常见问题与调参
 
@@ -353,8 +422,9 @@ $$
 | 路径不存在或输出位置不对 | 从项目根目录运行；相对路径均相对于当前工作目录。分析增强结果时显式填写 `--outdir` |
 | 没有词组通过筛选 | 先看 `phrase_candidates.csv`；适当降低 `--min-phrase-frequency` 或 `--min-npmi`，确认原文是连续匹配且不是重复段落 |
 | 候选已入选，矩阵里却没有 | 看 `merged_count` 和 `included_in_matrix`；再检查重叠、`--min-frequency` 和 `--top-words` |
-| 只有 40 个词，或想多保留词组 | 将 `--top-words` 调大或设为 `0`；必要时降低片段频率门槛 |
-| CSV 词很多，图上只有 40 项 | 增强/关联度脚本的默认显示上限；调整 `--plot-top-words`，无需改变 CSV |
+| 基础共现热图只显示 40 个词 | 调整 `cooccurrence.py` 的 `--plot-top-words`；CSV 仍包含全部满足 `--min-frequency` 的词 |
+| 增强结果只保留 40 个词或词组 | 将 `phrase_enhance.py` 的 `--top-words` 调大或设为 `0`；必要时降低片段频率门槛 |
+| CSV 词很多，增强/关联度图上只有 40 项 | 调整对应脚本的 `--plot-top-words`，无需改变 CSV |
 | 图片太密或生成较慢 | 减少显示项、调整 `--figure-size`；增强脚本可加 `--no-plots`。完整矩阵存储量随词数平方增长 |
 | `no words/terms remain` | 检查英文内容，降低 `--min-frequency` 或 `--min-length`；空文件和中文正文不会得到英文词表 |
 | `no off-diagonal co-occurrences` | 输入没有可评分的配对事件；检查是否只剩孤立词，并重新生成包含有效邻接边的计数矩阵 |
@@ -374,6 +444,7 @@ $$
 | `phrase_entropy.py` | 原文连续词组左/右/联合边界熵矩阵、报告和六张有向热力图（四张原轴图、两张删全空行列图） |
 | `phrase_metrics.py` | 原文左/右熵及 PPMI/NPMI 对齐矩阵、一张四分格热力图 |
 | `cluster_words.py` | 聚类分组 CSV 和树状图 |
+| `bool_hop_stability.py` | 每步 Boolean 可达矩阵 CSV 和热力图 |
 | `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
 | `test_association.py` | PPMI/NPMI 矩阵与 CLI 回归测试 |
 | `test_phrase_entropy.py` | 原文左/右/联合边界熵、词序、上下文边界和输出测试 |
@@ -390,6 +461,7 @@ $$
 .\.venv\Scripts\python.exe association.py --help
 .\.venv\Scripts\python.exe phrase_entropy.py --help
 .\.venv\Scripts\python.exe cluster_words.py --help
+.\.venv\Scripts\python.exe bool_hop_stability.py --help
 ```
 
 运行项目测试：
