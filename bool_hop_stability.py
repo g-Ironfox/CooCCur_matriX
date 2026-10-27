@@ -120,9 +120,123 @@ def plot_reachability(path: Path, labels: list[str], matrix: np.ndarray,
     plt.close(fig)
 
 
-def run(input_path: Path, outdir: Path, cell_size: float = 0.35) -> int:
+WORD_STATS_FIELDS = ["rank", "word", "incoming_score", "outgoing_score", "min_score",
+          "incoming_reachable", "outgoing_reachable", "self_score"]
+
+
+def summarize_weighted_words(path: Path, include_diagonal: bool = False,
+              sort_by: str = "incoming") -> list[dict]:
+    """Row = source, column = destination; scores sum integer matrix entries."""
+    if sort_by not in ("incoming", "outgoing", "min"):
+        raise ValueError("sort_by must be incoming, outgoing or min")
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.reader(file)
+        header = next(reader, [])
+        labels = header[1:]
+        if not labels or len(set(labels)) != len(labels) or any(not w.strip() for w in labels):
+            raise ValueError("CSV must contain unique, non-empty word labels")
+        size = len(labels)
+        incoming, outgoing = [0] * size, [0] * size
+        in_count, out_count, diagonal = [0] * size, [0] * size, [0] * size
+        row_count = 0
+        for i, row in enumerate(reader):
+            if i >= size or len(row) != size + 1:
+                raise ValueError("matrix must be square with one data row per word")
+            if row[0] != labels[i]:
+                raise ValueError("row labels must match column labels in the same order")
+            for j, value in enumerate(row[1:]):
+                try:
+                    score = int(value)
+                except ValueError as error:
+                    raise ValueError(f"invalid integer weight at row {i + 1}, column {j + 1}") from error
+                if score < 0:
+                    raise ValueError("weights must be non-negative integers")
+                if i == j:
+                    diagonal[i] = score
+                    if not include_diagonal:
+                        continue
+                outgoing[i] += score
+                incoming[j] += score
+                if score > 0:
+                    out_count[i] += 1
+                    in_count[j] += 1
+            row_count += 1
+        if row_count != size:
+            raise ValueError("matrix must be square with one data row per word")
+
+    rows = [dict(word=word, incoming_score=incoming[i], outgoing_score=outgoing[i],
+                 min_score=min(incoming[i], outgoing[i]),
+                 incoming_reachable=in_count[i], outgoing_reachable=out_count[i],
+                 self_score=diagonal[i]) for i, word in enumerate(labels)]
+    rows.sort(key=lambda row: (-row[f"{sort_by}_score"], row["word"]))
+    for rank, row in enumerate(rows, 1):
+        row["rank"] = rank
+    return rows
+
+
+def plot_word_stats(path: Path, rows: list[dict], include_diagonal: bool) -> None:
+    fig, axes = plt.subplots(1, 3, figsize=(20, max(4, len(rows) * 0.3 + 1.8)),
+                             sharey=True, constrained_layout=True)
+    positions = list(range(len(rows)))
+    for ax, field, title, color in [
+        (axes[0], "min_score", "Min score (row sum, column sum)", "#7563A0"),
+        (axes[1], "incoming_score", "Incoming score (column sum)", "#2F6F73"),
+        (axes[2], "outgoing_score", "Outgoing score (row sum)", "#A85F50"),
+    ]:
+        values = [row[field] for row in rows]
+        bars = ax.barh(positions, values, color=color)
+        ax.bar_label(bars, padding=3, fontsize=7, fmt="%.0f")
+        ax.set_xlim(0, max(values, default=0) * 1.22 or 1)
+        ax.set_title(title)
+        ax.set_xlabel("Sum of weighted Boolean scores")
+        ax.grid(axis="x", alpha=0.25)
+        ax.set_axisbelow(True)
+    axes[0].set_yticks(positions, labels=[row["word"] for row in rows], fontsize=9)
+    axes[0].invert_yaxis()
+    axes[0].set_ylabel("Word")
+    diagonal_note = "included" if include_diagonal else "excluded"
+    fig.suptitle(f"Weighted hop scores by word — diagonal {diagonal_note}")
+    try:
+        fig.savefig(path, dpi=160)
+    finally:
+        plt.close(fig)
+
+
+def write_word_stats(input_path: Path, outdir: Path, top: int = 30,
+        include_diagonal: bool = False, sort_by: str = "incoming") -> list[dict]:
+    if top < 0:
+        raise ValueError("--top must be >= 0")
+    rows = summarize_weighted_words(input_path, include_diagonal, sort_by)
+    outdir.mkdir(parents=True, exist_ok=True)
+    prefix = input_path.stem
+    csv_path = outdir / f"{prefix}_word_stats.csv"
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=WORD_STATS_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    shown = rows[:top] if top else rows
+    # Keep complete word labels readable even when --top 0 selects all words.
+    pages = [shown[start:start + 40] for start in range(0, len(shown), 40)]
+    for page, subset in enumerate(pages, 1):
+        suffix = f"_{page:03d}" if len(pages) > 1 else ""
+        png_path = outdir / f"{prefix}_word_stats{suffix}.png"
+        plot_word_stats(png_path, subset, include_diagonal)
+        print(f"Plot: {png_path}")
+    print(f"Words: {len(rows)}; sorted by: {sort_by} score")
+    print(f"Statistics: {csv_path}")
+    return rows
+
+
+
+def run(input_path: Path, outdir: Path, cell_size: float = 0.35,
+        top: int = 30, sort_by: str = "incoming",
+        include_diagonal: bool = False) -> int:
     if not np.isfinite(cell_size) or cell_size <= 0:
         raise ValueError("cell size must be greater than zero")
+    if top < 0:
+        raise ValueError("--top must be >= 0")
+    if sort_by not in ("incoming", "outgoing", "min"):
+        raise ValueError("sort_by must be incoming, outgoing or min")
     labels, adjacency = read_matrix(input_path)
     if not labels:
         raise ValueError("input graph must contain at least one vertex")
@@ -137,6 +251,8 @@ def run(input_path: Path, outdir: Path, cell_size: float = 0.35) -> int:
         write_matrix(outdir / f"weighted_{hop:03d}.csv", labels, weighted)
         plot_reachability(outdir / f"weighted_{hop:03d}.png", labels,
                           weighted, hop, stable, cell_size, weighted=True)
+        write_word_stats(outdir / f"weighted_{hop:03d}.csv", outdir,
+                         top, include_diagonal, sort_by)
 
     print(f"Vertices: {len(labels)}")
     print(f"Stabilization hop: {stable_hop}")
@@ -154,10 +270,17 @@ def main() -> None:
                         help="Directory for per-hop matrices and heatmaps")
     parser.add_argument("--cell-size", type=float, default=0.35,
                         help="Approximate heatmap cell size in inches (default: 0.35)")
+    parser.add_argument("--top", type=int, default=30,
+                        help="Words to plot at each hop; 0 plots all, 40 per image (default: 30)")
+    parser.add_argument("--sort-by", choices=["incoming", "outgoing", "min"], default="incoming",
+                        help="Rank each hop by column sum, row sum or their minimum (default: incoming)")
+    parser.add_argument("--include-diagonal", action="store_true",
+                        help="Include self-return values in word statistics; hop matrices are unchanged")
     args = parser.parse_args()
     try:
-        run(Path(args.input), Path(args.outdir), args.cell_size)
-    except (OSError, ValueError) as error:
+        run(Path(args.input), Path(args.outdir), args.cell_size,
+            args.top, args.sort_by, args.include_diagonal)
+    except (OSError, ValueError, csv.Error) as error:
         parser.error(str(error))
 
 

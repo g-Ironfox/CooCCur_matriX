@@ -13,6 +13,7 @@
 | `trigram_potential.py` | Markdown 和二词候选 CSV | 分析候选二词组的左右三词扩展，输出频次、左熵、右熵对照柱状图 | `output/trigram_potential/` |
 | `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
 | `bool_hop_stability.py` | 有向或无向布尔邻接矩阵 CSV | 计算累计 Boolean n-hop 可达关系的稳定 hop，并逐步输出可达、加权矩阵和热力图 | `output/bool_hop_stability/` |
+| `weighted_word_stats.py` | 加权 hop 矩阵 CSV | 按词统计抵达、出发总分，输出排序 CSV 和完整词名柱状图 | `output/weighted_word_stats/` |
 
 词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
 
@@ -79,7 +80,7 @@ python -m venv .venv
 命令格式：
 
 ```text
-python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES]
+python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES] [--top N] [--sort-by incoming|outgoing|min] [--include-diagonal]
 ```
 
 | 参数 | 必填 | 默认值 | 含义 |
@@ -87,6 +88,9 @@ python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES]
 | `input` | 是 | 无 | 带标签的方阵邻接矩阵 CSV |
 | `--outdir DIR` | 否 | `output/bool_hop_stability/` | 每步矩阵和热力图的输出目录 |
 | `--cell-size INCHES` | 否 | `0.35` | 热力图单格目标尺寸，单位英寸；图像画布最大为 18 英寸 |
+| `--top N` | 否 | `30` | 每一跳的词统计图显示前 N 个词；0 表示全部，每图最多 40 个词 |
+| `--sort-by` | 否 | `incoming` | 词统计按抵达分数 `incoming`、出发分数 `outgoing` 或两者较小值 `min` 排序 |
+| `--include-diagonal` | 否 | 默认不启用 | 将自身返回分数纳入词统计；不改变 hop 矩阵和稳定判断 |
 
 CSV 第一行是列标签，第一列是行标签；左上角可以写 `word` 或 `vertex`。行标签必须与列标签按相同顺序对应。示例：
 
@@ -117,6 +121,40 @@ S_3 = 3B + 2B² + B³
 加权图值越大颜色越深，色条显示该轮数值范围。加权矩阵在布尔可达关系稳定的那一轮停止输出；这只是计算终点，加权数值本身不保证稳定。最终结果就是最后一轮的 `weighted_NNN.csv`。此功能仍使用完整矩阵存储，三万顶点的计算和绘图内存问题尚未解决。
 
 
+
+### 加权 hop 矩阵的逐词统计
+
+逐词统计已集成到 `bool_hop_stability.py`，每一跳计算完加权矩阵后自动生成，无需再执行第二个脚本：
+
+```powershell
+.\.venv\Scripts\python.exe bool_hop_stability.py output/base/undirected_bool.csv --outdir output/bool_hop_stability --top 30
+```
+
+统计文件与 hop 矩阵存放在同一输出目录，名称使用对应步数。例如稳定于第 12 跳时，第 1 到第 12 跳分别输出 `weighted_001_word_stats.csv/.png` 至 `weighted_012_word_stats.csv/.png`。每步按该步分数重新排序，CSV 保留全部词，图片默认显示前 30 个词；用 `--top 0` 展示全部并自动分图。默认按列总和排序并排除自身返回分数，可用 `--sort-by outgoing` 或 `--include-diagonal` 调整，参数统一作用于所有步骤。
+
+每一步的统计图从左到右依次为三栏：同一个词的 `min_score = min(行总分, 列总分)`、列总分、行总分。三栏共用同一组完整词名和排序。使用 `--sort-by min` 可按较小值降序排列，每一步都根据当前加权矩阵重新计算：
+
+```powershell
+.\.venv\Scripts\python.exe bool_hop_stability.py output/base/directed_bool.csv --outdir output/directed_bool_hop_stability --sort-by min --top 30
+```
+
+如果只想分析已经生成的加权 CSV，保留以下独立入口；它复用 `bool_hop_stability.py` 中的实现：
+
+```powershell
+.\.venv\Scripts\python.exe weighted_word_stats.py output/bool_hop_stability/weighted_012.csv --top 30
+```
+
+不传输入路径时默认读取上例文件。脚本逐行累加，不将完整矩阵载入内存。输出 `weighted_012_word_stats.csv` 保留全部词，图像 `weighted_012_word_stats.png` 默认展示按抵达分数排序的前 30 个词，三栏从左到右分别显示同一组词的较小值、抵达总分、出发总分，轴标签显示完整词名。此入口也支持 `--sort-by min`。
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `input` | `output/bool_hop_stability/weighted_012.csv` | 带行列词名的非负整数加权矩阵 CSV |
+| `--outdir` | `output/weighted_word_stats` | 统计表和图像输出目录 |
+| `--top` | `30` | 图中展示的词数，0 表示全部；每图最多 40 个词，超出自动分图；CSV 始终保留全部词 |
+| `--sort-by` | `incoming` | 按抵达分数 `incoming`、出发分数 `outgoing` 或两者较小值 `min` 降序排列 |
+| `--include-diagonal` | 默认不启用 | 将自身返回分数纳入总分与可达词数 |
+
+CSV 中 `incoming_score` 是列总和（抵达该词的加权分数），`outgoing_score` 是行总和（从该词出发的加权分数），`min_score = min(incoming_score, outgoing_score)`；`incoming_reachable`、`outgoing_reachable` 分别是列、行中非零项的数量；`self_score` 单独记录对角线值。默认统计排除对角线，使用 `--include-diagonal` 时，`min_score` 也取包含对角线的两个总分的较小值。无向图的出发、抵达总分及 `min_score` 应一致，有向图则可能不同。这些分数是加权布尔可达值的总和，不是原文词频或路径条数。
 
 #### `phrase_metrics.py` 使用说明
 

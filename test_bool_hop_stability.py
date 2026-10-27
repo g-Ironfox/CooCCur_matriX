@@ -70,8 +70,20 @@ class BooleanHopTests(unittest.TestCase):
             self.assertEqual(stable, 2)
             self.assertEqual(len(list(output.glob("reachability_*.csv"))), 2)
             self.assertEqual(len(list(output.glob("reachability_*.png"))), 2)
-            self.assertEqual(len(list(output.glob("weighted_*.csv"))), 2)
-            self.assertEqual(len(list(output.glob("weighted_*.png"))), 2)
+            self.assertEqual(len(list(output.glob("weighted_[0-9][0-9][0-9].csv"))), 2)
+            self.assertEqual(len(list(output.glob("weighted_[0-9][0-9][0-9].png"))), 2)
+            for hop in (1, 2):
+                self.assertTrue((output / f"weighted_{hop:03d}_word_stats.csv").is_file())
+                self.assertTrue((output / f"weighted_{hop:03d}_word_stats.png").is_file())
+            with (output / "weighted_001_word_stats.csv").open(encoding="utf-8-sig") as file:
+                first_stats = list(csv.DictReader(file))
+            self.assertEqual(first_stats[0]["word"], "b")
+            self.assertEqual(first_stats[0]["incoming_score"], "2")
+            with (output / "weighted_002_word_stats.csv").open(encoding="utf-8-sig") as file:
+                stats = list(csv.DictReader(file))
+            self.assertEqual(stats[0]["word"], "b")
+            self.assertEqual(stats[0]["incoming_score"], "4")
+            self.assertEqual(stats[0]["outgoing_score"], "4")
             with (output / "weighted_002.csv").open(encoding="utf-8-sig") as file:
                 scores = list(csv.reader(file))
             self.assertEqual(scores[0], ["vertex", "a", "b", "c"])
@@ -146,10 +158,22 @@ class BooleanHopTests(unittest.TestCase):
             self.assertFalse(adjacency[1, 0])
             result = subprocess.run(
                 [sys.executable, str(Path(hops.__file__).resolve()), str(source),
-                 "--outdir", str(output)], capture_output=True, text=True)
+                 "--outdir", str(output), "--top", "1", "--sort-by", "min",
+                 "--include-diagonal"], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Stabilization hop: 2", result.stdout)
-            self.assertEqual(len(list(output.iterdir())), 8)
+            self.assertEqual(len(list(output.iterdir())), 12)
+            with (output / "weighted_002_word_stats.csv").open(encoding="utf-8-sig") as file:
+                stats = list(csv.DictReader(file))
+            self.assertEqual(len(stats), 3)
+            self.assertEqual(stats[0]["word"], "b")
+            self.assertEqual(stats[0]["outgoing_score"], "2")
+            self.assertEqual(stats[0]["incoming_score"], "2")
+            self.assertEqual(stats[0]["min_score"], "2")
+            with (output / "weighted_001_word_stats.csv").open(encoding="utf-8-sig") as file:
+                first_stats = list(csv.DictReader(file))
+            self.assertEqual(first_stats[0]["word"], "b")
+            self.assertEqual(first_stats[0]["min_score"], "1")
             with (output / "weighted_002.csv").open(encoding="utf-8-sig") as file:
                 scores = list(csv.reader(file))
             self.assertEqual(scores[1], ["a", "0", "2", "1"])
