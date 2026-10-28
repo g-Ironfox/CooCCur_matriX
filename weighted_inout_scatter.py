@@ -9,9 +9,12 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import numpy as np
 
 
-FIELDS = ["rank", "word", "incoming_score", "outgoing_score", "min_score"]
+FIELDS = ["rank", "word", "incoming_score", "outgoing_score", "min_score",
+          "max_score", "directional_imbalance"]
 
 
 def summarize_matrix(path: Path, include_diagonal: bool = False,
@@ -55,6 +58,11 @@ def summarize_matrix(path: Path, include_diagonal: bool = False,
             "incoming_score": incoming[i],
             "outgoing_score": outgoing[i],
             "min_score": min(incoming[i], outgoing[i]),
+            "max_score": max(incoming[i], outgoing[i]),
+            "directional_imbalance": (
+                (incoming[i] - outgoing[i]) / (incoming[i] + outgoing[i])
+                if incoming[i] + outgoing[i] else 0.0
+            ),
         }
         for i, word in enumerate(labels)
     ]
@@ -76,23 +84,37 @@ def summarize_matrix(path: Path, include_diagonal: bool = False,
     return rows
 
 
-def plot_scatter(path: Path, rows: list[dict], sort_by: str) -> None:
-    fig, ax = plt.subplots(figsize=(9, 7), constrained_layout=True)
-    incoming = [row["incoming_score"] for row in rows]
-    outgoing = [row["outgoing_score"] for row in rows]
-    ax.scatter(outgoing, incoming, s=38, alpha=0.78, color="#2F6F73",
-               edgecolors="white", linewidths=0.6)
+def plot_scatter(path: Path, rows: list[dict], sort_by: str,
+                 label_words: set[str] | None = None) -> None:
+    fig, ax = plt.subplots(figsize=(11, 8), constrained_layout=True)
+    incoming = np.asarray([row["incoming_score"] for row in rows], dtype=float)
+    outgoing = np.asarray([row["outgoing_score"] for row in rows], dtype=float)
+    balanced = np.asarray([row["min_score"] for row in rows], dtype=float)
+    imbalance = np.asarray([row["directional_imbalance"] for row in rows], dtype=float)
+    peak = float(balanced.max(initial=0.0))
+    sizes = 22 + 78 * np.sqrt(balanced / peak) if peak else np.full(len(rows), 22.0)
+    points = ax.scatter(outgoing, incoming, s=sizes, c=imbalance, cmap="RdBu_r",
+                        norm=Normalize(-1, 1), alpha=0.8, edgecolors="white",
+                        linewidths=0.45, zorder=2)
+    labels = label_words if label_words is not None else {row["word"] for row in rows}
     for row in rows:
-        ax.annotate(row["word"], (row["outgoing_score"], row["incoming_score"]),
-                    xytext=(4, 4), textcoords="offset points", fontsize=8)
-    limit = max([*incoming, *outgoing], default=0)
-    ax.set_xlim(0, limit * 1.12 or 1)
-    ax.set_ylim(0, limit * 1.12 or 1)
+        if row["word"] in labels:
+            ax.annotate(row["word"], (row["outgoing_score"], row["incoming_score"]),
+                        xytext=(4, 4), textcoords="offset points", fontsize=7)
+    limit = max(float(incoming.max(initial=0)), float(outgoing.max(initial=0)))
+    limit = limit * 1.12 or 1
+    ax.plot([0, limit], [0, limit], color="#555555", linewidth=1,
+            linestyle="--", alpha=0.6, zorder=1)
+    ax.set_xlim(0, limit)
+    ax.set_ylim(0, limit)
+    ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("Outgoing score (row sum)")
     ax.set_ylabel("Incoming score (column sum)")
-    ax.set_title(f"Incoming vs. outgoing scores (ranked by {sort_by})")
+    ax.set_title(f"Incoming vs. outgoing scores\nsize = min(in, out); ranked by {sort_by}")
     ax.grid(alpha=0.25)
     ax.set_axisbelow(True)
+    fig.colorbar(points, ax=ax,
+                 label="Directional imbalance (incoming - outgoing) / (incoming + outgoing)")
     try:
         fig.savefig(path, dpi=160)
     finally:
@@ -115,16 +137,23 @@ def run(input_path: Path, outdir: Path, top: int = 30,
         writer.writeheader()
         writer.writerows(rows)
 
-    shown = rows[:top] if top else rows
-    pages = ([shown[start:start + page_size]
-              for start in range(0, len(shown), page_size)]
-             if page_size else [shown])
-    for page, subset in enumerate(pages, 1):
+    primary = rows[:top] if top else rows
+    label_words = {row["word"] for row in primary}
+    if top:
+        label_words.update(row["word"] for row in
+                           sorted(rows, key=lambda row: (-row["incoming_score"], row["word"]))[:8])
+        label_words.update(row["word"] for row in
+                           sorted(rows, key=lambda row: (-row["outgoing_score"], row["word"]))[:8])
+    ordered_labels = [row["word"] for row in rows if row["word"] in label_words]
+    pages = ([ordered_labels[start:start + page_size]
+              for start in range(0, len(ordered_labels), page_size)]
+             if page_size else [ordered_labels])
+    for page, page_labels in enumerate(pages, 1):
         suffix = f"_{page:03d}" if len(pages) > 1 else ""
         image_path = outdir / f"{prefix}_inout_scatter{suffix}.png"
-        plot_scatter(image_path, subset, sort_by)
+        plot_scatter(image_path, rows, sort_by, set(page_labels))
         print(f"Plot: {image_path}")
-    print(f"Words: {len(rows)}; sorted by: {sort_by}")
+    print(f"Words: {len(rows)}; labels: {len(label_words)}; sorted by: {sort_by}")
     print(f"Statistics: {csv_path}")
     return rows
 
@@ -135,9 +164,9 @@ def main() -> None:
     parser.add_argument("--outdir", default="output/weighted_inout_scatter",
                         help="Output directory")
     parser.add_argument("--top", type=int, default=30,
-                        help="Words to plot; 0 plots all (default: 30)")
+                        help="Primary ranked words to label; 0 labels all (default: 30)")
     parser.add_argument("--page-size", type=int, default=0,
-                        help="Words per image; 0 disables pagination (default: 0)")
+                        help="Labels per image; all points remain in every plot (default: 0)")
     parser.add_argument("--sort-by", choices=["max", "min", "total"], default="max",
                         help="Rank by max(incoming, outgoing), min(incoming, outgoing), or their sum")
     parser.add_argument("--include-diagonal", action="store_true",

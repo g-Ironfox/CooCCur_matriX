@@ -23,7 +23,10 @@ class WeightedInoutScatterTests(unittest.TestCase):
         rows = {row["word"]: row for row in scatter.summarize_matrix(self.source)}
         self.assertEqual(rows["a"]["outgoing_score"], 10)
         self.assertEqual(rows["a"]["incoming_score"], 0)
+        self.assertEqual(rows["a"]["max_score"], 10)
+        self.assertEqual(rows["a"]["directional_imbalance"], -1)
         self.assertEqual(rows["b"]["incoming_score"], 10)
+        self.assertEqual(rows["b"]["directional_imbalance"], 0.25)
         included = {row["word"]: row for row in
                     scatter.summarize_matrix(self.source, include_diagonal=True)}
         self.assertEqual(included["a"]["incoming_score"], 5)
@@ -51,6 +54,7 @@ class WeightedInoutScatterTests(unittest.TestCase):
             rows = list(csv.DictReader(file))
         self.assertEqual(len(rows), 4)
         self.assertEqual(rows[0]["word"], "b")
+        self.assertIn("directional_imbalance", rows[0])
         self.assertTrue((output / "weighted_004_inout_scatter.png").is_file())
         self.assertGreater((output / "weighted_004_inout_scatter.png").stat().st_size, 0)
 

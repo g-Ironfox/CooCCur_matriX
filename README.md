@@ -12,9 +12,11 @@
 | `select_bigrams.py` | Markdown，默认 `1.md` | 按频次、PPMI/NPMI 和低边界熵筛选有向二词候选 | `output/bigram_candidates/` |
 | `trigram_potential.py` | Markdown 和二词候选 CSV | 分析候选二词组的左右三词扩展，输出频次、左熵、右熵对照柱状图 | `output/trigram_potential/` |
 | `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
+| `block_diagonal_reorder.py` | 有向或无向非负邻接矩阵 CSV | 用 Leiden/Louvain 检测社区并同步重排行列，输出热力图和顺序表 | `output/block_diagonal/` |
 | `bool_hop_stability.py` | 有向或无向布尔邻接矩阵 CSV | 计算累计 Boolean n-hop 可达关系的稳定 hop，并逐步输出可达、加权矩阵和热力图 | `output/bool_hop_stability/` |
 | `weighted_word_stats.py` | 加权 hop 矩阵 CSV | 按词统计抵达、出发总分，输出排序 CSV 和完整词名柱状图 | `output/weighted_word_stats/` |
-| `weighted_inout_scatter.py` | 加权 hop 矩阵 CSV | 按词统计 in/out 分数并输出坐标散点图 | `output/weighted_inout_scatter/` |
+| `weighted_inout_scatter.py` | 加权 hop 矩阵 CSV | 绘制完整 in/out 散点，按方向偏差着色并标注重点词 | `output/weighted_inout_scatter/` |
+| `node_removal_connectivity.py` | 有向或无向邻接矩阵 CSV | 逐节点模拟删除，比较连通分量与可达节点对变化 | `output/node_removal_connectivity/` |
 | `textrank.py` | 有向或无向加权邻接矩阵 CSV | 计算加权 TextRank 基线，输出全词分数 CSV 和排名图 | `output/textrank/` |
 
 词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
@@ -41,6 +43,24 @@ python -m venv .venv
 ```
 
 第一步默认保留至少出现在 2 个片段中的前 40 个高频词；频率按**包含该词的片段数**计算。后两步分别分析第一步生成的矩阵，可以独立选择运行。
+
+### Louvain/Leiden 社区与块对角重排
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-community.txt
+.\.venv\Scripts\python.exe block_diagonal_reorder.py output/base/undirected_diag_zero.csv --method leiden --resolution 1.0
+.\.venv\Scripts\python.exe block_diagonal_reorder.py output/base/directed_diag_zero.csv --method louvain --resolution 1.0 --outdir output/directed_blocks
+```
+
+输入为带行列标签的非负方阵 CSV，格式与共现脚本的输出一致；行标签必须与列标签顺序一致。社区检测使用 python-igraph 的 Leiden/Louvain 加权模块度算法；有向输入将任一方向的边权作为无向社区亲和度，`max(A, A.T)`。自环不参与社区检测，但原矩阵输出会保留全部边权、自环和原有方向。社区按内部权重从高到低排列，社区内节点按内部加权度排列。
+
+算法自动决定社区数。`--resolution` 控制社区粒度：值越高通常得到越小、越多的社区；建议比较 `0.5`、`1.0`、`1.5` 等设置，不应把某个固定值当作正确答案。`--seed` 固定随机种子以便复现；`--iterations -1` 让 Leiden 迭代到稳定。`--prefix` 可设置文件名前缀，默认为输入文件名。输出包含：
+
+- `<prefix>_block_diagonal.png`：重排热力图，白线表示社区边界；大矩阵自动稀疏显示轴标签。
+- `<prefix>_reordered.csv`：包含全部节点的重排矩阵。
+- `<prefix>_order.csv`：新位置、原位置（均从 1 开始）、节点名称和社区编号。
+
+社区是优化模块度得到的划分，不等于连通分量，也不保证跨社区没有边。Leiden 通常比 Louvain 稳定，建议先用 Leiden，再以 Louvain 对照；图仍看不出明显块时，先检查输入是否过稀疏，并比较不同分辨率。矩阵按稠密 CSV 读入，适合当前这类中小规模网络。
 
 ### 词组增强、左右熵与后续分析
 
@@ -113,7 +133,17 @@ gamma,0,1,0
 .\.venv\Scripts\python.exe weighted_inout_scatter.py output/directed_bool_hop_stability/weighted_004.csv --top 30 --sort-by total
 ```
 
-支持 `--sort-by max|min|total`，默认 `max`；`--top 0` 显示全部词，CSV 始终包含完整统计。默认不分页；可用 `--page-size N` 指定每张图的词数，`0` 表示不分页（默认）。默认排除对角线，传入 `--include-diagonal` 可将自返分数纳入 in/out 总和。输出目录可用 `--outdir` 指定。
+支持 `--sort-by max|min|total`，默认 `max`；散点始终包含矩阵中的全部词。`--top` 控制主排名词的标注数，默认额外标注入向和出向各自的前 8 个词；`--top 0` 标注全部词。`--page-size N` 可将标签分到多张图，每张图仍保留完整散点底图。点大小表示 `min(incoming, outgoing)`，颜色表示归一化方向偏差 `(incoming-outgoing)/(incoming+outgoing)`。CSV 始终包含完整统计及方向偏差。默认排除对角线，传入 `--include-diagonal` 可将自返分数纳入 in/out 总和。输出目录可用 `--outdir` 指定。
+
+### 删除节点后的连通性影响
+
+`node_removal_connectivity.py` 对矩阵中每个节点分别模拟删除，输出删除前后的连通分量数、最大分量大小，以及原先连通但删除后断开的节点对数。默认使用弱连通（忽略箭头方向）；有向图可用 `--mode strong` 检查强连通。矩阵中正值表示边，权重大小不参与连通判断，对角线自环会忽略。
+
+```powershell
+.\.venv\Scripts\python.exe node_removal_connectivity.py output/directed_bool_hop_stability3/weighted_004.csv --mode weak --top 30
+```
+
+输出 CSV 包含所有节点；PNG 按断开节点对数排序，默认展示前 30 个，`--top 0` 展示全部。
 
 ### TextRank 消融基线
 
