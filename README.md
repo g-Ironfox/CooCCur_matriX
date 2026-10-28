@@ -14,6 +14,8 @@
 | `cluster_words.py` | 矩阵 CSV，默认 `output/undirected_diag_zero.csv` | 按邻接模式聚类，输出分组及树状图 | `output/` |
 | `bool_hop_stability.py` | 有向或无向布尔邻接矩阵 CSV | 计算累计 Boolean n-hop 可达关系的稳定 hop，并逐步输出可达、加权矩阵和热力图 | `output/bool_hop_stability/` |
 | `weighted_word_stats.py` | 加权 hop 矩阵 CSV | 按词统计抵达、出发总分，输出排序 CSV 和完整词名柱状图 | `output/weighted_word_stats/` |
+| `weighted_inout_scatter.py` | 加权 hop 矩阵 CSV | 按词统计 in/out 分数并输出坐标散点图 | `output/weighted_inout_scatter/` |
+| `textrank.py` | 有向或无向加权邻接矩阵 CSV | 计算加权 TextRank 基线，输出全词分数 CSV 和排名图 | `output/textrank/` |
 
 词组增强可独立运行。关联度分析和聚类都可以直接读取它生成的矩阵，不必先运行 `cooccurrence.py`。
 
@@ -102,6 +104,26 @@ gamma,0,1,0
 ```
 
 矩阵必须是方阵且对角线为零；无向图矩阵对称，有向图可以不对称。脚本按 `B > 0` 转换为布尔邻接矩阵。
+
+### 加权 hop 矩阵的 in/out 坐标图
+
+要直接分析 `bool_hop_stability.py` 生成的 `weighted_NNN.csv`，使用独立脚本 `weighted_inout_scatter.py`。它保留矩阵中的整数权重，横轴为行和（outgoing），纵轴为列和（incoming），而不是把矩阵重新解释为基础邻接图。
+
+```powershell
+.\.venv\Scripts\python.exe weighted_inout_scatter.py output/directed_bool_hop_stability/weighted_004.csv --top 30 --sort-by total
+```
+
+支持 `--sort-by max|min|total`，默认 `max`；`--top 0` 显示全部词，CSV 始终包含完整统计。默认不分页；可用 `--page-size N` 指定每张图的词数，`0` 表示不分页（默认）。默认排除对角线，传入 `--include-diagonal` 可将自返分数纳入 in/out 总和。输出目录可用 `--outdir` 指定。
+
+### TextRank 消融基线
+
+`textrank.py` 在同一份带词名的基础邻接矩阵上运行加权 PageRank/TextRank，行是出发词、列是目标词，边权按出边总权重归一化。无出边节点按均匀分布回灌；默认阻尼系数为 0.85。用于和多跳方法公平比较时，应传入相同的基础图（例如 `directed_bool.csv` 或 `undirected_bool.csv`），不要传入多跳生成的 `weighted_NNN.csv`。
+
+```powershell
+.\.venv\Scripts\python.exe textrank.py output/undirected_bool.csv --outdir output/textrank --top 40
+```
+
+命令格式：`python textrank.py <input.csv> [--outdir DIR] [--top N] [--damping D] [--tolerance EPS] [--max-iterations N]`。CSV 输出全部词，包含 `rank`、`word`、`textrank_score`；PNG 默认展示前 30 个词，`--top 0` 展示全部。TextRank 是整张图上的全局中心性分数，和截图中的逐词 incoming/outgoing 加权 hop 总分定义不同，比较时应按排序、Top-K 重合率或与人工标签的一致性评估，不要直接比较两种分数的绝对值。
 
 脚本按 `R_n = B ∨ B² ∨ … ∨ Bⁿ` 计算累计可达矩阵，并使用布尔乘法迭代 `R_(k+1) = R_k ∨ (R_k @ B)`。当 `R_(k+1) = R_k` 时，返回 k 作为稳定步数，不额外输出重复的第 k+1 步。停止判断包含对角线：例如有向三环在第 3 步才产生回到自身的可达项，因此稳定步数为 3。无边图按第 1 步已稳定处理。
 
@@ -483,7 +505,9 @@ $$
 | `phrase_metrics.py` | 原文左/右熵及 PPMI/NPMI 对齐矩阵、一张四分格热力图 |
 | `cluster_words.py` | 聚类分组 CSV 和树状图 |
 | `bool_hop_stability.py` | 每步 Boolean 可达矩阵 CSV 和热力图 |
+| `textrank.py` | 基础邻接矩阵上的 TextRank 全词排名 CSV 和 PNG |
 | `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
+| `test_textrank.py` | 加权 TextRank 方向、参数校验和 CLI 输出测试 |
 | `test_association.py` | PPMI/NPMI 矩阵与 CLI 回归测试 |
 | `test_phrase_entropy.py` | 原文左/右/联合边界熵、词序、上下文边界和输出测试 |
 | `requirements-clustering.txt` | 五个脚本共用的依赖列表 |
@@ -500,6 +524,7 @@ $$
 .\.venv\Scripts\python.exe phrase_entropy.py --help
 .\.venv\Scripts\python.exe cluster_words.py --help
 .\.venv\Scripts\python.exe bool_hop_stability.py --help
+.\.venv\Scripts\python.exe textrank.py --help
 ```
 
 运行项目测试：
