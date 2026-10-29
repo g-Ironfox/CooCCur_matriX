@@ -66,19 +66,31 @@ def write_matrix(path: Path, labels: list[str], matrix: np.ndarray) -> None:
         writer = csv.writer(file)
         writer.writerow(["vertex", *labels])
         for label, row in zip(labels, matrix):
-            writer.writerow([label, *map(int, row.tolist())])
+            if np.issubdtype(np.asarray(matrix).dtype, np.floating):
+                values = [format(float(value), ".12g") for value in row]
+            else:
+                values = list(map(int, row.tolist()))
+            writer.writerow([label, *values])
 
 
-def iter_weighted_hops(adjacency: np.ndarray, max_hops: int):
+def iter_weighted_hops(adjacency: np.ndarray, max_hops: int,
+                       decay: str = "linear", alpha: float | None = None):
     """Yield (k, R_k, S_k); yielded arrays are updated by the next step.
 
-    Powers use Boolean multiplication. S_k uses ordinary integer addition:
-    C_k = C_(k-1) + B^k and S_k = S_(k-1) + C_k.
-    Thus every earlier power gains one unit of weight at every new hop.
+    Powers use Boolean multiplication. Linear mode preserves the original
+    cumulative weighting; exponential mode sums alpha**k * B^k.
     """
+    if decay not in ("linear", "exponential"):
+        raise ValueError("decay must be linear or exponential")
+    if decay == "exponential":
+        if alpha is None or not np.isfinite(alpha) or not 0 < alpha < 1:
+            raise ValueError("exponential decay requires alpha with 0 < alpha < 1")
+    elif alpha is not None:
+        raise ValueError("alpha can only be used with exponential decay")
     if max_hops < 1:
         return
-    dtype = np.min_scalar_type(max_hops * (max_hops + 1) // 2)
+    dtype = (float if decay == "exponential"
+             else np.min_scalar_type(max_hops * (max_hops + 1) // 2))
     base = np.asarray(adjacency, dtype=bool)
     power = base.copy()
     reachability = power.copy()
@@ -88,8 +100,11 @@ def iter_weighted_hops(adjacency: np.ndarray, max_hops: int):
         if hop > 1:
             power = power @ base
             reachability |= power
-        cumulative += power
-        weighted += cumulative
+        if decay == "linear":
+            cumulative += power
+            weighted += cumulative
+        else:
+            weighted += (alpha ** hop) * power
         yield hop, reachability, weighted
 
 
@@ -99,7 +114,7 @@ def plot_reachability(path: Path, labels: list[str], matrix: np.ndarray,
     size = max(5, min(18, len(labels) * cell_size + 4))
     label_size = max(3, min(8, cell_size * 18))
     fig, ax = plt.subplots(figsize=(size, size * 0.88), constrained_layout=True)
-    vmax = max(1, int(matrix.max())) if weighted else 1
+    vmax = max(1e-15, float(matrix.max())) if weighted else 1
     image = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=vmax, interpolation="nearest")
     if weighted:
         fig.colorbar(image, ax=ax, label="Weighted Boolean score (darker = larger)")
@@ -146,11 +161,13 @@ def summarize_weighted_words(path: Path, include_diagonal: bool = False,
                 raise ValueError("row labels must match column labels in the same order")
             for j, value in enumerate(row[1:]):
                 try:
-                    score = int(value)
+                    score = float(value)
                 except ValueError as error:
-                    raise ValueError(f"invalid integer weight at row {i + 1}, column {j + 1}") from error
-                if score < 0:
-                    raise ValueError("weights must be non-negative integers")
+                    raise ValueError(f"invalid numeric weight at row {i + 1}, column {j + 1}") from error
+                if not np.isfinite(score) or score < 0:
+                    raise ValueError("weights must be finite and non-negative")
+                if score.is_integer():
+                    score = int(score)
                 if i == j:
                     diagonal[i] = score
                     if not include_diagonal:
@@ -185,7 +202,7 @@ def plot_word_stats(path: Path, rows: list[dict], include_diagonal: bool) -> Non
     ]:
         values = [row[field] for row in rows]
         bars = ax.barh(positions, values, color=color)
-        ax.bar_label(bars, padding=3, fontsize=7, fmt="%.0f")
+        ax.bar_label(bars, padding=3, fontsize=7, fmt="%.3g")
         ax.set_xlim(0, max(values, default=0) * 1.22 or 1)
         ax.set_title(title)
         ax.set_xlabel("Sum of weighted Boolean scores")
@@ -230,7 +247,8 @@ def write_word_stats(input_path: Path, outdir: Path, top: int = 30,
 
 def run(input_path: Path, outdir: Path, cell_size: float = 0.35,
         top: int = 30, sort_by: str = "incoming",
-        include_diagonal: bool = False) -> int:
+        include_diagonal: bool = False, decay: str = "linear",
+        alpha: float | None = None) -> int:
     if not np.isfinite(cell_size) or cell_size <= 0:
         raise ValueError("cell size must be greater than zero")
     if top < 0:
@@ -241,9 +259,18 @@ def run(input_path: Path, outdir: Path, cell_size: float = 0.35,
     if not labels:
         raise ValueError("input graph must contain at least one vertex")
 
+    if decay == "exponential":
+        if alpha is None or not np.isfinite(alpha) or not 0 < alpha < 1:
+            raise ValueError("exponential decay requires alpha with 0 < alpha < 1")
+    elif decay != "linear":
+        raise ValueError("decay must be linear or exponential")
+    elif alpha is not None:
+        raise ValueError("--alpha can only be used with exponential decay")
+
     stable_hop = stabilization_hops(adjacency)
     outdir.mkdir(parents=True, exist_ok=True)
-    for hop, reachability, weighted in iter_weighted_hops(adjacency, stable_hop):
+    for hop, reachability, weighted in iter_weighted_hops(
+            adjacency, stable_hop, decay, alpha):
         stable = hop == stable_hop
         write_matrix(outdir / f"reachability_{hop:03d}.csv", labels, reachability)
         plot_reachability(outdir / f"reachability_{hop:03d}.png", labels,
@@ -256,6 +283,7 @@ def run(input_path: Path, outdir: Path, cell_size: float = 0.35,
 
     print(f"Vertices: {len(labels)}")
     print(f"Stabilization hop: {stable_hop}")
+    print(f"Weighting: {decay}" + (f" (alpha={alpha:g})" if alpha is not None else ""))
     print(f"Steps visualized: {stable_hop}")
     print(f"Output directory: {outdir}")
     return stable_hop
@@ -276,10 +304,14 @@ def main() -> None:
                         help="Rank each hop by column sum, row sum or their minimum (default: incoming)")
     parser.add_argument("--include-diagonal", action="store_true",
                         help="Include self-return values in word statistics; hop matrices are unchanged")
+    parser.add_argument("--decay", choices=["linear", "exponential"], default="linear",
+                        help="Hop weighting mode (default: linear)")
+    parser.add_argument("--alpha", type=float,
+                        help="Exponential attenuation factor; required with --decay exponential (0 < alpha < 1)")
     args = parser.parse_args()
     try:
         run(Path(args.input), Path(args.outdir), args.cell_size,
-            args.top, args.sort_by, args.include_diagonal)
+            args.top, args.sort_by, args.include_diagonal, args.decay, args.alpha)
     except (OSError, ValueError, csv.Error) as error:
         parser.error(str(error))
 

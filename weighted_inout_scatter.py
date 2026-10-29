@@ -39,11 +39,13 @@ def summarize_matrix(path: Path, include_diagonal: bool = False,
                 raise ValueError("row labels must match column labels in the same order")
             for j, value in enumerate(row[1:]):
                 try:
-                    score = int(value)
+                    score = float(value)
                 except ValueError as error:
-                    raise ValueError(f"invalid integer weight at row {i + 1}, column {j + 1}") from error
-                if score < 0:
-                    raise ValueError("weights must be non-negative integers")
+                    raise ValueError(f"invalid numeric weight at row {i + 1}, column {j + 1}") from error
+                if not np.isfinite(score) or score < 0:
+                    raise ValueError("weights must be finite and non-negative")
+                if score.is_integer():
+                    score = int(score)
                 if i == j and not include_diagonal:
                     continue
                 outgoing[i] += score

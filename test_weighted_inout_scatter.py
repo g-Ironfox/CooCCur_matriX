@@ -32,6 +32,15 @@ class WeightedInoutScatterTests(unittest.TestCase):
         self.assertEqual(included["a"]["incoming_score"], 5)
         self.assertEqual(included["a"]["outgoing_score"], 15)
 
+    def test_fractional_weights_are_supported(self):
+        self.source.write_text(
+            "vertex,a,b,c,d\na,0,0.5,0,0\nb,0,0,0.25,0\n"
+            "c,0,0,0,0\nd,0,0,0,0\n", encoding="utf-8")
+        rows = {row["word"]: row for row in scatter.summarize_matrix(self.source)}
+        self.assertEqual(rows["a"]["outgoing_score"], 0.5)
+        self.assertEqual(rows["b"]["incoming_score"], 0.5)
+        self.assertEqual(rows["b"]["outgoing_score"], 0.25)
+
     def test_sort_by_modes(self):
         self.assertEqual(
             [row["word"] for row in scatter.summarize_matrix(self.source, sort_by="max")],

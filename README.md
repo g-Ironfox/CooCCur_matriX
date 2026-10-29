@@ -16,6 +16,7 @@
 | `bool_hop_stability.py` | 有向或无向布尔邻接矩阵 CSV | 计算累计 Boolean n-hop 可达关系的稳定 hop，并逐步输出可达、加权矩阵和热力图 | `output/bool_hop_stability/` |
 | `weighted_word_stats.py` | 加权 hop 矩阵 CSV | 按词统计抵达、出发总分，输出排序 CSV 和完整词名柱状图 | `output/weighted_word_stats/` |
 | `weighted_inout_scatter.py` | 加权 hop 矩阵 CSV | 绘制完整 in/out 散点，按方向偏差着色并标注重点词 | `output/weighted_inout_scatter/` |
+| `inout_uv_scatter.py` | 加权 hop 矩阵 CSV | 将 in/out 旋转为总体量 u 与方向差 v 并绘图 | `output/inout_uv_scatter/` |
 | `node_removal_connectivity.py` | 有向或无向邻接矩阵 CSV | 逐节点模拟删除，比较连通分量与可达节点对变化 | `output/node_removal_connectivity/` |
 | `textrank.py` | 有向或无向加权邻接矩阵 CSV | 计算加权 TextRank 基线，输出全词分数 CSV 和排名图 | `output/textrank/` |
 
@@ -102,7 +103,7 @@ python -m venv .venv
 命令格式：
 
 ```text
-python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES] [--top N] [--sort-by incoming|outgoing|min] [--include-diagonal]
+python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES] [--top N] [--sort-by incoming|outgoing|min] [--include-diagonal] [--decay linear|exponential] [--alpha FLOAT]
 ```
 
 | 参数 | 必填 | 默认值 | 含义 |
@@ -113,6 +114,16 @@ python bool_hop_stability.py <input.csv> [--outdir DIR] [--cell-size INCHES] [--
 | `--top N` | 否 | `30` | 每一跳的词统计图显示前 N 个词；0 表示全部，每图最多 40 个词 |
 | `--sort-by` | 否 | `incoming` | 词统计按抵达分数 `incoming`、出发分数 `outgoing` 或两者较小值 `min` 排序 |
 | `--include-diagonal` | 否 | 默认不启用 | 将自身返回分数纳入词统计；不改变 hop 矩阵和稳定判断 |
+| `--decay` | 否 | `linear` | 选择现有线性累计权重，或指数 hop 权重 |
+| `--alpha FLOAT` | 指数模式必填 | 无 | 指数模式的衰减系数，要求 `0 < alpha < 1`；第 k 跳布尔幂乘以 `alpha^k` |
+
+例如，使用 `alpha=0.5` 运行指数衰减：
+
+```powershell
+.\.venv\Scripts\python.exe bool_hop_stability.py output/base/directed_bool.csv --decay exponential --alpha 0.5 --outdir output/directed_bool_exponential
+```
+
+无论选择哪种权重模式，迭代仍在累计布尔可达关系不再新增时结束；指数模式输出小数权重。
 
 CSV 第一行是列标签，第一列是行标签；左上角可以写 `word` 或 `vertex`。行标签必须与列标签按相同顺序对应。示例：
 
@@ -134,6 +145,14 @@ gamma,0,1,0
 ```
 
 支持 `--sort-by max|min|total`，默认 `max`；散点始终包含矩阵中的全部词。`--top` 控制主排名词的标注数，默认额外标注入向和出向各自的前 8 个词；`--top 0` 标注全部词。`--page-size N` 可将标签分到多张图，每张图仍保留完整散点底图。点大小表示 `min(incoming, outgoing)`，颜色表示归一化方向偏差 `(incoming-outgoing)/(incoming+outgoing)`。CSV 始终包含完整统计及方向偏差。默认排除对角线，传入 `--include-diagonal` 可将自返分数纳入 in/out 总和。输出目录可用 `--outdir` 指定。
+
+若要把同一组分数旋转到总体量与方向差坐标，可运行 `inout_uv_scatter.py`：
+
+```powershell
+.\.venv\Scripts\python.exe inout_uv_scatter.py output/directed_bool_hop_stability/weighted_004.csv --top 30
+```
+
+横轴 `u=(incoming+outgoing)/2`（平均值），纵轴 `v=(incoming-outgoing)/2`（半差值）。`v=0` 表示入出平衡；点大小仍表示 `min(incoming, outgoing)`，颜色表示相对方向偏差。散点标注前 `--top` 个词；支持 `--sort-by projection|min|max`、`--page-size`、`--include-diagonal` 和 `--outdir`。`--top 0` 标注全部词，超过 40 个时自动分页。CSV 输出原始分数及所有词的 `u_score`、`v_score`。
 
 ### 删除节点后的连通性影响
 

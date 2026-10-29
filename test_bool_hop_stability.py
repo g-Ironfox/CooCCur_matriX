@@ -43,6 +43,29 @@ class BooleanHopTests(unittest.TestCase):
             np.testing.assert_array_equal(weighted, expected[hop - 1])
             np.testing.assert_array_equal(reachability, weighted > 0)
 
+    def test_exponential_mode_weights_each_exact_hop_by_alpha_power(self):
+        graph = np.array([
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 0, 0],
+        ], dtype=bool)
+        results = [(hop, reach.copy(), score.copy())
+                   for hop, reach, score in hops.iter_weighted_hops(
+                       graph, 2, "exponential", 0.5)]
+        np.testing.assert_allclose(results[0][2], [
+            [0, 0.5, 0], [0, 0, 0.5], [0, 0, 0],
+        ])
+        np.testing.assert_allclose(results[1][2], [
+            [0, 0.5, 0.25], [0, 0, 0.5], [0, 0, 0],
+        ])
+
+    def test_exponential_mode_requires_decay_alpha(self):
+        graph = np.array([[0, 1], [0, 0]], dtype=bool)
+        for alpha in (None, 0, 1, -0.1, float("nan")):
+            with self.subTest(alpha=alpha):
+                with self.assertRaisesRegex(ValueError, "alpha"):
+                    list(hops.iter_weighted_hops(graph, 1, "exponential", alpha))
+
     def test_weighted_scores_do_not_wrap_at_uint8(self):
         graph = np.array([[0, 1], [1, 0]], dtype=bool)
         for hop, _, weighted in hops.iter_weighted_hops(graph, 33):
@@ -178,6 +201,27 @@ class BooleanHopTests(unittest.TestCase):
                 scores = list(csv.reader(file))
             self.assertEqual(scores[1], ["a", "0", "2", "1"])
             self.assertEqual(scores[3], ["c", "0", "0", "0"])
+
+    def test_exponential_cli_writes_float_matrix_readable_by_summaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / "chain.csv", root / "out"
+            source.write_text(
+                "vertex,a,b,c\na,0,1,0\nb,0,0,1\nc,0,0,0\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(Path(hops.__file__).resolve()), str(source),
+                 "--outdir", str(output), "--decay", "exponential", "--alpha", "0.5"],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Weighting: exponential (alpha=0.5)", result.stdout)
+            rows = hops.summarize_weighted_words(
+                output / "weighted_002.csv", sort_by="min")
+            self.assertEqual(rows[0]["word"], "b")
+            self.assertEqual(rows[0]["incoming_score"], 0.5)
+            self.assertEqual(rows[0]["outgoing_score"], 0.5)
+            with (output / "weighted_002.csv").open(encoding="utf-8-sig") as file:
+                matrix = list(csv.reader(file))
+            self.assertEqual(matrix[1][3], "0.25")
 
     def test_self_loops_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
