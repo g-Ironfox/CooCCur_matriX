@@ -17,6 +17,7 @@
 | `weighted_word_stats.py` | 加权 hop 矩阵 CSV | 按词统计抵达、出发总分，输出排序 CSV 和完整词名柱状图 | `output/weighted_word_stats/` |
 | `weighted_inout_scatter.py` | 加权 hop 矩阵 CSV | 绘制完整 in/out 散点，按方向偏差着色并标注重点词 | `output/weighted_inout_scatter/` |
 | `inout_uv_scatter.py` | 加权 hop 矩阵 CSV | 将 in/out 旋转为总体量 u 与方向差 v 并绘图 | `output/inout_uv_scatter/` |
+| `adjacency_embedding_viz.py` | 有向非负加权邻接矩阵 CSV | 拼接每个词的出边行向量和入边列向量，用 PCA 降到二维并输出坐标与散点图 | `output/adjacency_embedding_viz/` |
 | `node_removal_connectivity.py` | 有向或无向邻接矩阵 CSV | 逐节点模拟删除，比较连通分量与可达节点对变化 | `output/node_removal_connectivity/` |
 | `textrank.py` | 有向或无向加权邻接矩阵 CSV | 计算加权 TextRank 基线，输出全词分数 CSV 和排名图 | `output/textrank/` |
 
@@ -153,6 +154,18 @@ gamma,0,1,0
 ```
 
 横轴 `u=(incoming+outgoing)/2`（平均值），纵轴 `v=(incoming-outgoing)/2`（半差值）。`v=0` 表示入出平衡；点大小仍表示 `min(incoming, outgoing)`，颜色表示相对方向偏差。散点标注前 `--top` 个词；支持 `--sort-by projection|min|max`、`--page-size`、`--include-diagonal` 和 `--outdir`。`--top 0` 标注全部词，超过 40 个时自动分页。CSV 输出原始分数及所有词的 `u_score`、`v_score`。
+
+### 有向矩阵的 in/out 特征降维图
+
+`adjacency_embedding_viz.py` 不要求输入一定是 Katz 矩阵。只要是带词标签的有向非负方阵，就可以把每个词表示为 (出边行向量, 入边列向量)，分别保留它指向谁、被谁指向的信息，再使用 PCA 投影到二维。`bool_hop_stability.py` 输出的 `weighted_NNN.csv` 可以直接输入；基础布尔邻接矩阵的 0/1 值也支持。矩阵行表示出发词，列表示目标词，首行和首列必须是同一组词且顺序一致。
+
+```powershell
+.\.venv\Scripts\python.exe adjacency_embedding_viz.py output/katz_stability/katz_002.csv
+.\.venv\Scripts\python.exe adjacency_embedding_viz.py output/directed_bool_hop_stability/weighted_004.csv --outdir output/directed_bool_hop_stability/weighted_004_embedding
+.\.venv\Scripts\python.exe adjacency_embedding_viz.py output/base/directed_bool.csv --outdir output/directed_bool_embedding
+```
+
+脚本输出全词二维坐标 CSV（含入向、出向总权重）和 PNG。默认标注权重总和最高的 15 个词，可用 `--label-top N` 调整，`--label-top 0` 不标注。特征先开平方以压缩较大边权，再对拼接的行/列特征做 PCA；颜色表示入向与出向总权重。前两主成分的解释方差会打印在终端。PCA 是线性投影，二维距离只适合探索性观察，不代表严格的语义距离或聚类结论。
 
 ### 删除节点后的连通性影响
 
@@ -554,6 +567,7 @@ $$
 | `phrase_metrics.py` | 原文左/右熵及 PPMI/NPMI 对齐矩阵、一张四分格热力图 |
 | `cluster_words.py` | 聚类分组 CSV 和树状图 |
 | `bool_hop_stability.py` | 每步 Boolean 可达矩阵 CSV 和热力图 |
+| `adjacency_embedding_viz.py` | 有向词出入边特征二维坐标 CSV 和 PCA 散点图 |
 | `textrank.py` | 基础邻接矩阵上的 TextRank 全词排名 CSV 和 PNG |
 | `test_phrase_enhance.py` | 词组挖掘、精确重建和 CLI 输出测试 |
 | `test_textrank.py` | 加权 TextRank 方向、参数校验和 CLI 输出测试 |
