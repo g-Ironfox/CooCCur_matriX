@@ -71,7 +71,7 @@ def tokenize_segments(paragraphs: list[str], min_length: int) -> list[list[str]]
     return segments
 
 
-def build_matrices(segments: list[list[str]], min_frequency: int):
+def build_matrices(segments: list[list[str]], min_frequency: int, top_words: int = 0):
     frequencies, directed_counts, undirected_counts = Counter(), Counter(), Counter()
     for segment in segments:
         frequencies.update(set(segment))
@@ -81,6 +81,10 @@ def build_matrices(segments: list[list[str]], min_frequency: int):
                 undirected_counts[tuple(sorted((left, right)))] += 1
 
     terms = [word for word, count in frequencies.most_common() if count >= min_frequency]
+    if top_words < 0:
+        raise ValueError("top_words must be >= 0")
+    if top_words:
+        terms = terms[:top_words]
     terms.sort()
     indices = {word: i for i, word in enumerate(terms)}
 

@@ -233,7 +233,8 @@ def write_word_stats(input_path: Path, outdir: Path, top: int = 30,
         writer.writerows(rows)
     shown = rows[:top] if top else rows
     # Keep complete word labels readable even when --top 0 selects all words.
-    pages = [shown[start:start + 40] for start in range(0, len(shown), 40)]
+    page_size = 50
+    pages = [shown[start:start + page_size] for start in range(0, len(shown), page_size)]
     for page, subset in enumerate(pages, 1):
         suffix = f"_{page:03d}" if len(pages) > 1 else ""
         png_path = outdir / f"{prefix}_word_stats{suffix}.png"
@@ -299,7 +300,7 @@ def main() -> None:
     parser.add_argument("--cell-size", type=float, default=0.35,
                         help="Approximate heatmap cell size in inches (default: 0.35)")
     parser.add_argument("--top", type=int, default=30,
-                        help="Words to plot at each hop; 0 plots all, 40 per image (default: 30)")
+                        help="Words to plot at each hop; 0 plots all, 50 per image (default: 30)")
     parser.add_argument("--sort-by", choices=["incoming", "outgoing", "min"], default="incoming",
                         help="Rank each hop by column sum, row sum or their minimum (default: incoming)")
     parser.add_argument("--include-diagonal", action="store_true",
